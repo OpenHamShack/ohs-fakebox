@@ -1,0 +1,23 @@
+#!/bin/bash
+# Is this input device a keypad the operator chose as a controller?
+#   openhamshack-keypad <eventN>          (udev, from 91-openhamshack-pad.rules, as root)
+#
+# Exit 0 only when the device's vendor:product:name is a line of
+# /etc/openhamshack/keypads, which the daemon writes from Settings > Controller;
+# the rule then gives plugdev the node. Every other keyboard - the one kept
+# for typing, the touchscreen's - stays unreadable to the openhamshack user.
+# The id is built byte for byte as controllers/keypad.py's device_id does.
+#
+# Reads only: sysfs and the list. The list is the daemon's file, so it is
+# matched as fixed whole lines and never sourced or expanded.
+# (Two more arguments, a sysfs root and a list, are for the tests.)
+set -u
+dev=${1:-}
+sys=${2:-/sys}/class/input/$dev/device
+list=${3:-/etc/openhamshack/keypads}
+[[ $dev =~ ^event[0-9]+$ ]] || exit 1
+[[ -f $list && ! -L $list ]] || exit 1
+vendor=$(<"$sys/id/vendor") || exit 1
+product=$(<"$sys/id/product") || exit 1
+name=$(tr -c 'A-Za-z0-9 ._\n-' '_' < "$sys/name" | head -c 60 | tr -d '\n') || exit 1
+grep -qxF -- "$vendor:$product:$name" "$list"

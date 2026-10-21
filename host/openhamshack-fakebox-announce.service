@@ -1,0 +1,14 @@
+# Bonjour advert for the Dock360 fakebox, present only while it answers.
+# A user service (linger is on for the installing user) because announcing
+# needs nothing but the system D-Bus, which any user may use for avahi.
+[Unit]
+Description=Announce the OpenHamShack fakebox on the LAN while it is running
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/dock360-apps-openhamshack-fakebox/host/announce.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

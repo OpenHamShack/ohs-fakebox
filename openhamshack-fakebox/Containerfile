@@ -1,0 +1,44 @@
+# OpenHamShack Fakebox.
+#
+# One stage, everything from Debian. The box code is vendored in this
+# directory (vendor/, pinned by tools/refresh-vendor.sh) rather than fetched,
+# because the service account that builds this cannot read the working trees
+# it comes from, and a build that cloned it would run whatever was on the
+# branch that day.
+FROM docker.io/library/debian:13-slim
+
+# ffmpeg is the stream: Debian's build carries libx264 and libx265 for the two
+# video codecs, the native mp2 and aac encoders, and libsrt for the daemon's
+# camera listener. fonts-dejavu-core because the clock burnt into the picture
+# (how latency is read off a screen) is ffmpeg's drawtext, which finds its
+# font through fontconfig and fails the whole stream without one.
+#
+# ca-certificates because /api/qo100 has the daemon fetch the BATC wideband
+# feed over HTTPS; without a trust store that fails as a certificate error
+# rather than anything that reads like a missing package.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        ffmpeg \
+        fonts-dejavu-core \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin fakebox \
+    && mkdir -p /data && chown fakebox:fakebox /data
+
+COPY module.yaml /opt/fakebox/module.yaml
+COPY vendor/ /opt/fakebox/vendor/
+COPY app/ /opt/fakebox/app/
+COPY entrypoint.sh /opt/fakebox/entrypoint.sh
+RUN chmod 0755 /opt/fakebox/entrypoint.sh
+
+# The image is read-only at run time; the daemon's state goes to the tmpfs
+# on /tmp and clips live in the /data volume.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FAKEBOX_DATA=/data
+
+USER fakebox
+WORKDIR /opt/fakebox
+EXPOSE 8080 18081
+ENTRYPOINT ["/opt/fakebox/entrypoint.sh"]

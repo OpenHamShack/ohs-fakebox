@@ -1,0 +1,14 @@
+[Unit]
+Description=Hourly look at whether Debian security updates are due
+
+[Timer]
+# Hourly, though it updates at most daily (openhamshack-os-update decides): a box
+# that is on air or recording when it looks is looked at again an hour
+# later, not a day later. Persistent catches up a box that was switched off;
+# the delay keeps every box on a network from fetching at the same minute.
+OnCalendar=hourly
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

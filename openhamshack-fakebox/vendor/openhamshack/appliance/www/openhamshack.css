@@ -1,0 +1,1287 @@
+  /* Built for the box's own touchscreen (1920x1200, no keyboard): light and
+     high-contrast so it reads across a shack, every control a tap target of
+     64px or more, and nothing that needs typing - numbers come from presets
+     or the on-screen pad. It still works in a browser elsewhere. */
+  :root {
+    --bg: #eef1f5; --card: #ffffff; --ink: #0f1720; --dim: #4a5565; --line: #c9d1dc;
+    --chip: #e3e8ef; --sel: #1554c0; --sel-ink: #ffffff; --ok: #137a3c; --warn: #b26a00; --air: #c4231b;
+    /* Sizes, as variables so that the Compact density (density.js) is one
+       class that sets them again rather than a second stylesheet that
+       could drift from this one. Touch, below, is the box's own screen. */
+    --fs: 24px; --fs-s: 21px; --fs-label: 20px; --ctl-h: 52px; --chip-fs: 21px; --chip-pad: 8px; --gap: 5px;
+    --label-w: 120px; --page-pad: 16px 28px; --sec-pad: 14px 22px; --sec-gap: 7px; --h2: 26px;
+    --big-fs: 38px; --big-h: 56px; --ptt-h: 90px; --ptt-fs: 44px; --nav-h: 60px; --nav-fs: 22px; --radius: 12px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+               font: var(--fs)/1.3 system-ui, "DejaVu Sans", sans-serif; }
+  body { height: 100vh; display: flex; flex-direction: column; }
+  /* The header. One row on the touchscreen's 1920: Back, the page's name,
+     the callsign, the page buttons in three labelled groups, and the states
+     (YouTube, ISS, REC, ON AIR, PA) at the right, none of which may wrap
+     onto two lines. The page buttons are 64 px like every control on the
+     box - they were 44, the smallest on the screen and the most used. */
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 6px 24px; background: var(--card);
+           border-bottom: 2px solid var(--line); }
+  header h1 { margin: 0; font-size: 30px; letter-spacing: .5px; white-space: nowrap; }
+  #setback { display: none; min-height: 64px; min-width: 132px; font-size: 24px; flex: none; }
+  #navtoggle { display: none; }
+  #nav { display: flex; align-items: flex-end; gap: 18px; }
+  /* A group: its name small above its buttons. */
+  .navgrp { display: flex; flex-direction: column; gap: 2px; }
+  .navbtns { display: flex; gap: 6px; }
+  .navlab { font-size: 13px; font-weight: 700; color: var(--dim); text-transform: uppercase;
+            letter-spacing: 1px; line-height: 1.2; padding-left: 4px; }
+  #nav .chip { min-height: var(--nav-h); padding: 0 14px; font-size: var(--nav-fs); white-space: nowrap; }
+  #pills { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: none; }
+  .tap { cursor: pointer; user-select: none; }
+  #call { font: 700 30px ui-monospace, "DejaVu Sans Mono", monospace; padding: 8px 18px; border-radius: 12px;
+          background: var(--chip); white-space: nowrap; }
+  #state { font-weight: 700; font-size: 28px; padding: 10px 22px; border-radius: 999px; white-space: nowrap;
+           background: var(--chip); }
+  #state.air { background: var(--air); color: #fff; }
+  #recpill { display: none; font: 800 22px system-ui, "DejaVu Sans", sans-serif; padding: 8px 16px; border-radius: 999px;
+             border: 2px solid var(--air); background: #fde4e2; color: var(--air); white-space: nowrap; cursor: pointer;
+             font-variant-numeric: tabular-nums; }
+  #recpill.on { display: inline-block; }
+  /* A dot on a button: something new behind it (an update). */
+  .badge { display: none; width: 14px; height: 14px; border-radius: 50%; background: var(--warn); margin-left: 8px;
+           vertical-align: top; box-shadow: 0 0 0 2px var(--card); }
+  .badge.on { display: inline-block; }
+  #setcats .chip.hasbadge::after { content: ""; display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+                                   background: var(--warn); margin-left: 10px; vertical-align: middle; }
+  #updline.news { color: var(--warn); font-weight: 700; }
+  /* The receive status strip (strip.js): on every page, tinted by lock. */
+  .rxstrip { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 18px; width: 100%; min-height: 52px; margin: 0;
+             padding: 6px 24px; border: 0; border-bottom: 2px solid var(--line); background: #f6f8fb; color: var(--ink);
+             font: 600 22px system-ui, "DejaVu Sans", sans-serif; text-align: left; cursor: pointer; }
+  .rxstrip.locked { background: #e6f5ec; border-bottom-color: var(--ok); }
+  .rxstrip .sst { font-weight: 800; }
+  .rxstrip.locked .sst { color: var(--ok); }
+  .rxstrip .sdot { width: 14px; height: 14px; border-radius: 50%; background: var(--ok); margin-right: -10px; }
+  .rxstrip .swho { font: 800 24px ui-monospace, "DejaVu Sans Mono", monospace; }
+  .rxstrip .smono { font: 600 21px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--dim); }
+  .rxstrip .sdim, .rxstrip .srx { color: var(--dim); }
+  .rxstrip .srx { font-weight: 800; }
+  .rxstrip .smargin { font-weight: 800; }
+  .rxstrip .smargin.good { color: var(--ok); }
+  .rxstrip .smargin.marginal { color: var(--warn); }
+  .rxstrip .smargin.bad { color: var(--air); }
+  .rxstrip .shint { color: var(--warn); font-weight: 700; }
+  .rxstrip .srec { color: var(--air); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rxstrip .sgo { margin-left: auto; color: var(--dim); font-size: 19px; white-space: nowrap; }
+  /* Two panels side by side: only what an operator changes while operating.
+     Everything set once per station lives on the Settings page. */
+  main { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: var(--page-pad); align-items: start; }
+  @media (max-width: 1100px) { main, #setgrid { grid-template-columns: 1fr; columns: 1; } }
+  /* Settings replaces the panels rather than floating over them: header and
+     TRANSMIT stay, so ON AIR is always visible and can always be stopped. */
+  #settings { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: var(--page-pad); }
+  body.insettings main, body.inqo main, body.inaim main, body.inham main { display: none; }
+  body.insettings #settings { display: block; }
+  /* The page you are on: its name, and Back; its own button is not
+     hidden (that moved every button after it) but shown as current. */
+  #h1set, #h1qo, #h1aim, #h1ham, #h1help, body.insettings #h1main, body.inqo #h1main,
+    body.inaim #h1main, body.inham #h1main, body.inhelp h1 > span:not(#h1help) { display: none; }
+  body.insettings #setback, body.inqo #setback, body.inaim #setback, body.inham #setback, body.inhelp #setback { display: inline-block; }
+  body.insettings #h1set, body.inqo #h1qo, body.inaim #h1aim, body.inham #h1ham, body.inhelp #h1help { display: inline; }
+  body.insettings #setbtn, body.inqo #qobtn, body.inaim #aimbtn, body.inham #hambtn, body.inlog #logbtn,
+    body.inhelp #helpbtn { background: var(--card); border-color: var(--ink); box-shadow: inset 0 -4px 0 var(--ink); }
+  /* QO-100 is a page like Settings, for the same reason: TRANSMIT stays.
+     Everything satellite-only lives here so the main panels stay the
+     terrestrial controls an operator uses on most nets. */
+  #qo { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: var(--page-pad); }
+  body.inqo #qo { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-content: start; }
+  @media (max-width: 1100px) { body.inqo #qo { grid-template-columns: 1fr; } }
+  #qo .wide { grid-column: 1 / -1; }
+  #qo .field { grid-template-columns: 150px 1fr; }
+  /* The downlink's state beside its heading, one line: the strip under the
+     header says the rest; this says what tapping a signal is doing. */
+  .qohead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+  .qohead h2 { margin: 0; }
+  #qorx { border-radius: 12px; padding: 4px 14px; background: var(--chip); flex: 1 1 260px; min-width: 0; }
+  #qorx.locked { background: #dff3e6; box-shadow: inset 0 0 0 2px var(--ok); }
+  #qorxlabel { font-size: 22px; font-weight: 800; }
+  #qorx.locked #qorxlabel { color: var(--ok); }
+  #qorxdetail { font: 600 19px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--dim); }
+  #qosafety { margin-left: auto; }
+  .qoup { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-width: 0; }
+  .qoup .big { flex: 0 1 auto; }
+  .qocredit { font-size: 18px; }
+  #qochat.folded #qochatin { display: none; }
+  #qochatfold { margin-left: auto; min-height: 52px; }
+  /* Room: at the touchscreen's sizes the page is one screen. */
+  #qo > section { padding: 10px 18px; gap: 6px; }
+  #qo .big { font-size: 32px; min-height: 52px; }
+  #qospec svg { display: block; width: 100%; height: auto; touch-action: manipulation; user-select: none; }
+  /* The waterfall sits exactly under the spectrum's plot area (its 8-unit
+     margins in a 1600-unit drawing are 0.5% a side), so a signal's trace
+     runs straight down from its peak. */
+  /* 120 px of the three minutes on a touchscreen, so the downlink and
+     uplink start above the fold; taller where the screen is. */
+  @media (min-width: 1101px) and (min-height: 1150px) { #qowf { height: 200px !important; } }
+  #qowf { position: relative; margin: 0 0.5%; height: 120px; background: #0b1020; border-radius: 4px; overflow: hidden;
+          touch-action: manipulation; user-select: none; cursor: crosshair; }
+  #qowfc { display: block; width: 100%; height: 100%; }
+  #qowfrx { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1px; background: var(--ok); display: none;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, .5); pointer-events: none; }
+  .wft { position: absolute; left: 6px; font-size: 15px; color: #c9d1dc; text-shadow: 0 0 3px #000; pointer-events: none; }
+  #qowfask { display: none; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 20px; }
+  #qowfask.on { display: flex; }
+  /* Who is in the room beside the messages: BATC sends the named users
+     ("nicks"); tapping one starts a message to them. */
+  #qochatbody { display: flex; gap: 10px; }
+  #qochatbody #qochatlog { flex: 1; min-width: 0; }
+  #qochatusers { width: 230px; height: 420px; overflow-y: auto; background: #1f2630; border-radius: 12px; padding: 8px 10px; }
+  #qochatuserhead { color: #9aa8b5; font-size: 15px; margin-bottom: 4px; }
+  #qochatuserlist button { display: block; width: 100%; text-align: left; background: none; border: 0; color: #d5dbe3;
+    font: 600 17px "DejaVu Sans Mono", ui-monospace, monospace; padding: 6px 4px; border-radius: 6px; cursor: pointer; }
+  #qochatuserlist button:hover { background: #2a3440; }
+  #qochatuserlist button.me { color: #7fd1a0; }
+  #qochatlog { height: 420px; overflow-y: auto; background: #1f2630; color: #d5dbe3; border-radius: 12px; padding: 10px 14px;
+               font: 19px/1.35 "DejaVu Sans", system-ui, sans-serif; overflow-wrap: anywhere; }
+  #qochatlog .t { color: #8f9aa8; margin-right: 8px; font-variant-numeric: tabular-nums; }
+  #qochatlog .n { color: #fbde2d; font-weight: 700; margin-right: 8px; }
+  #qochatlog .me .n { color: #7fe0a0; }
+  #qochatdraft { display: none; border: 2px solid var(--warn); background: #fff4d6; border-radius: 12px; padding: 10px 14px; gap: 8px; }
+  #qochatdraft.on { display: grid; }
+  #qochattext { font: 600 21px "DejaVu Sans", system-ui, sans-serif; overflow-wrap: anywhere; }
+  #qosigs .chip { min-width: 200px; }
+  #qosigs .chip.over { border-color: var(--air); }
+  #qotxch .chip { min-width: 96px; }
+  /* The band plan's first choice for the rate: a green edge, not a colour
+     fill, so the selected channel still reads as the selected one. */
+  #qotxch .chip.pref:not(.on) { border-color: var(--ok); border-width: 3px; }
+  /* HamTV: a page like QO-100. The pass table is the point of it, so it
+     gets the width; the countdown is large enough to read across the shack. */
+  #ham { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: var(--page-pad); }
+  body.inham #ham { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-content: start; }
+  @media (max-width: 1100px) { body.inham #ham { grid-template-columns: 1fr; } }
+  #ham .wide { grid-column: 1 / -1; }
+  #ham .field { grid-template-columns: 150px 1fr; }
+  #ham > section { min-width: 0; }
+  #hamnext { border-radius: 14px; padding: 12px 20px; background: var(--chip); display: grid; gap: 4px; }
+  #hamnext.up { background: #dff3e6; border: 2px solid var(--ok); }
+  #hamnext.soon { background: #fff4d6; border: 2px solid var(--warn); }
+  #hamcount { font: 800 44px ui-monospace, "DejaVu Sans Mono", monospace; }
+  #hamnextd { font-size: 21px; color: var(--dim); }
+  #hamnextd b { color: var(--ink); }
+  #hampasses { width: 100%; border-collapse: collapse; font-size: 21px; }
+  #hampasses th { text-align: left; color: var(--dim); font-weight: 600; font-size: 18px; padding: 4px 8px; }
+  #hampasses td { padding: 6px 8px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #hampasses tr.low td { color: var(--dim); }
+  #hampasses tr.good td.el { font-weight: 800; color: var(--ok); }
+  #hampasses tr.now td { background: #dff3e6; }
+  #hamtable { overflow-x: auto; }
+  #isspill { display: none; font-weight: 800; font-size: 22px; padding: 8px 18px; border-radius: 999px; background: var(--warn);
+             color: #fff; cursor: pointer; border: 0; }
+  #isspill.on { display: inline-block; }
+  #isspill.up { background: var(--ok); }
+  body.inham #isspill { display: none; }
+  .chip.arm { background: var(--warn); border-color: var(--warn); color: #fff; }
+  .warnbox { border-radius: 12px; padding: 10px 16px; background: #fff4d6; border: 2px solid var(--warn); font-size: 21px; line-height: 1.35; }
+  /* Settings: categories down the left at finger size, one category at a
+     time on the right. The page had grown to ten sections in two columns,
+     which on the touchscreen meant scrolling to find anything. The menu
+     stays put while a long category (Network, Screens) scrolls. */
+  #setwrap { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 24px; align-items: start; }
+  #setcats { position: sticky; top: 0; display: flex; flex-direction: column; gap: 8px; z-index: 1; }
+  #setcats .chip { min-height: 64px; text-align: left; padding: 0 20px; font-size: 24px; border-radius: 14px; }
+  #setgrid { display: grid; gap: 18px; align-content: start; }
+  #setgrid > section:not(.cur) { display: none; }
+  #netsec { order: -1; }        /* addresses before Stream to a PC */
+  #stationsec { order: -2; }    /* callsign and tuner before the radio and licence */
+  #setgrid .field { grid-template-columns: 170px 1fr; }
+  /* Explanations carry safety text (the LNB's DC warning): 21 px, not the
+     19 they were, at arm's length on a 13" panel. */
+  .expl { color: var(--dim); font-size: var(--fs-s); line-height: 1.35; }
+  .expl b { color: var(--ink); font-weight: 600; }
+  .err { color: var(--air); font-weight: 700; }
+  /* A remote browser without the PIN sees everything and can change nothing.
+     Its controls are dimmed and a tap on one says why (notices.js, which
+     also holds the rule that dims them); the readouts keep full strength.
+     What it could not use at all is not shown. */
+  body.remoteview #prev, body.remoteview #pttnote, body.remoteview #osbanner { display: none !important; }
+  body.remoteview .big.tap { border-style: dashed; }
+  #remotebar { display: none; background: #fff4d6; border-bottom: 2px solid var(--warn); padding: 8px 24px; gap: 8px 16px;
+               align-items: center; font-size: 21px; flex-wrap: wrap; }
+  #remotelogin { margin-left: auto; }
+  #toast { position: fixed; left: 50%; bottom: 150px; transform: translateX(-50%); max-width: calc(100vw - 32px);
+           background: #1f2937; color: #fff; padding: 14px 24px; border-radius: 14px; font-size: 22px; font-weight: 600;
+           z-index: 12; opacity: 0; pointer-events: none; transition: opacity .2s; text-align: center; }
+  #toast.on { opacity: 1; }
+  /* Notices (notices.js): each banner keeps its own colours below; these
+     are what they share. Behind the first, a notice waits for "+N more". */
+  .notice { display: none; padding: 8px 24px; gap: 6px 18px; align-items: center; flex-wrap: wrap; font-size: 21px; }
+  .notice.on { display: flex; }
+  #notices .notice.on.behind { display: none; }
+  .notice > div { flex: 1 1 480px; min-width: 0; overflow-wrap: anywhere; }
+  #noticemore { min-height: 48px; }
+  #txerrbar { background: #fde4e2; border-bottom: 2px solid var(--air); }
+  #txerrbar b { color: var(--air); }
+  .keylist { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 2px 16px; font-size: 19px; }
+  .keylist b { font: 700 19px ui-monospace, "DejaVu Sans Mono", monospace; }
+  /* The controller drawn from its driver's layout: screen keys dark with
+     what they show now, plain keys light, buttons and knobs round - the
+     shapes in the operator's hand, so the right one is found at a glance. */
+  #paddraw { display: grid; gap: 12px; width: fit-content; padding: 14px; border-radius: 18px; background: #2b333d;
+             max-width: 100%; overflow: hidden; }
+  .pc { min-width: 0; border: 3px solid transparent; font: 600 16px system-ui, "DejaVu Sans", sans-serif; line-height: 1.15;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 4px;
+        color: var(--ink); background: #e3e8ef; border-radius: 12px; overflow: hidden; text-align: center; }
+  .pc small { font-size: 13px; opacity: .8; font-weight: 600; }
+  .pc b, .pc small { overflow-wrap: anywhere; }
+  .pc .pid { font: 700 12px ui-monospace, "DejaVu Sans Mono", monospace; opacity: .7; }
+  .pc.screen-key { background: #1f2937; color: #fff; aspect-ratio: 1; border-radius: 10px; font-size: 17px; }
+  .pc.button { border-radius: 999px; aspect-ratio: 1; max-width: 88%; justify-self: center; font-size: 14px; }
+  .pc.knob { border-radius: 999px; aspect-ratio: 1; background: #8a96a6; color: #fff; font-size: 15px; }
+  .pc.key { min-height: 76px; }
+  .pc.hit { border-color: #f5c400; box-shadow: 0 0 0 3px #f5c400; }
+  .pc.changed .pid::after { content: " •"; color: #f5c400; }
+  #padextra:empty { display: none; }
+  #padextra { display: flex; flex-wrap: wrap; gap: 8px; }
+  #padextra .pc { width: 110px; min-height: 76px; }
+  #padpicklist { display: grid; gap: 12px; max-height: 60vh; overflow-y: auto; }
+  #padpicklist .chip { text-align: left; white-space: normal; padding: 6px 12px; }
+  #padpicklist h3 { margin: 0; font-size: 18px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  section { background: var(--card); border: 2px solid var(--line); border-radius: 18px; padding: var(--sec-pad);
+            display: flex; flex-direction: column; gap: var(--sec-gap); }
+  h2 { margin: 0 0 4px; font-size: var(--h2); text-transform: uppercase; letter-spacing: 1.5px; color: var(--dim); }
+  .field { display: grid; grid-template-columns: var(--label-w) 1fr; align-items: center; gap: 12px; }
+  .field > span { color: var(--dim); font-size: var(--fs-label); }
+  .big { font: 700 var(--big-fs) ui-monospace, "DejaVu Sans Mono", monospace; padding: 2px 18px; border-radius: var(--radius);
+         border: 2px solid var(--line); background: #f8fafc; min-height: var(--big-h); display: flex; align-items: center; }
+  .big small { font-size: 24px; color: var(--dim); margin-left: 10px; font-weight: 600; }
+  /* Gap and side padding are as tight as a finger allows: with the Radio
+     panel gone the two panels are equal, and at this size the longest rows
+     (FEC, the receive presets, both symbol rates) each fit on one line. */
+  .chips { display: flex; flex-wrap: wrap; gap: var(--gap); }
+  .chip { min-height: var(--ctl-h); min-width: 60px; padding: 0 var(--chip-pad); border-radius: var(--radius); border: 2px solid var(--line);
+          background: var(--chip); color: var(--ink); font: 600 var(--chip-fs) system-ui, "DejaVu Sans", sans-serif; }
+  /* Blue means one thing: the choice that is in force. A state (running,
+     recording) has its own look, information is plain text, and a chip that
+     removes something shows a red ✕. Older users read blue as "on". */
+  .chip.on { background: var(--sel); border-color: var(--sel); color: var(--sel-ink); }
+  .chip.going { background: #e6f5ec; border-color: var(--ok); color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
+  .chip.rec { background: var(--air); border-color: var(--air); color: #fff; }
+  .chip.forget i { font-style: normal; color: var(--air); font-weight: 800; margin-left: 6px; }
+  .inuse { align-self: center; font-weight: 700; color: var(--ok); white-space: nowrap; padding: 0 8px; }
+  /* Disabled: still readable, plainly not live, and (.why) saying why. At
+     .35 opacity a greyed chip all but vanished. */
+  .chip:disabled { opacity: .55; background: transparent; border-style: dashed; color: var(--dim); cursor: not-allowed; }
+  .why { align-self: center; color: var(--dim); font-size: 19px; font-style: italic; margin-left: 6px; }
+  .why[hidden] { display: none; }
+  .recwhere { align-self: center; color: var(--dim); font-size: 21px; margin-right: 6px; }
+  .recwhere b { color: var(--ink); }
+  #recinfo { color: var(--dim); font-size: 21px; }
+  #recinfo:empty { display: none; }
+  #recto .chip small { font-size: 16px; color: var(--dim); font-weight: 600; }
+  .stepper { display: flex; gap: 10px; align-items: center; }
+  .stepper .big { flex: 1; justify-content: center; }
+  .stepper .chip { min-width: 80px; font-size: 32px; }
+  #rxbox { border-radius: 14px; padding: 12px 20px; background: var(--chip); display: grid; gap: 4px; }
+  #rxbox.locked { background: #dff3e6; border: 2px solid var(--ok); }
+  #rxlabel { font-size: 30px; font-weight: 800; }
+  #rxbox.locked #rxlabel { color: var(--ok); }
+  #rxdetail { font: 600 26px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--dim); min-height: 34px; }
+  /* Advice for the station being received: read out to them over the
+     talkback, so it is plain words at a size readable across the shack. */
+  #rxadvice { font-size: 20px; line-height: 1.3; color: var(--ink); }
+  #rxadvice:empty { display: none; }
+  #rxadvice.warn { color: var(--warn); font-weight: 600; }
+  /* Several receivers: a card each, tapped to hear it (and fill the TV with
+     it; again for the grid). With one receiver none of this shows. */
+  #rxcards { display: none; gap: 8px; }
+  .multi #rxcards { display: grid; }
+  .multi #rxlabel, .multi #rxdetail, .multi #rxadvice { display: none; }
+  .multi #rxbox { background: none; border: none; padding: 0; }
+  #rx1head { display: none; font-size: 20px; color: var(--dim); font-weight: 700; margin-top: 4px; }
+  .multi #rx1head { display: block; }
+  .rxrow { display: flex; gap: 8px; align-items: stretch; }
+  .rxcard { flex: 1; min-width: 0; display: flex; gap: 14px; align-items: center; text-align: left; padding: 8px 14px;
+            border-radius: 14px; border: 2px solid var(--line); background: var(--chip); color: var(--ink);
+            font: inherit; cursor: pointer; }
+  .rxcard.locked { background: #dff3e6; border-color: var(--ok); }
+  .rxcard.heard { box-shadow: inset 0 0 0 3px var(--sel); }
+  .rxcard.off { opacity: .55; }
+  .rxn { font: 800 30px ui-monospace, "DejaVu Sans Mono", monospace; min-width: 40px; height: 40px; border-radius: 10px;
+         background: var(--card); border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; }
+  .rxcard.heard .rxn { background: var(--sel); border-color: var(--sel); color: var(--sel-ink); }
+  .rxmain { flex: 1; min-width: 0; display: grid; gap: 2px; }
+  .rxmain b { font-size: 24px; overflow-wrap: anywhere; }
+  .rxcard.locked .rxmain b { color: var(--ok); }
+  .rxmain small { font: 600 19px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--dim); overflow-wrap: anywhere; }
+  .rxbadge { font-size: 18px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+  .rxrow .chip { flex: none; }
+  .rxpickrow { display: grid; gap: 8px; }
+  footer { padding: 10px 28px 14px; background: var(--bg); border-top: 2px solid var(--line); }
+  #footrow { display: flex; gap: 14px; }
+  #prev { min-width: 220px; min-height: var(--ptt-h); font-size: 24px; border-radius: 20px; }
+  #ptt { flex: 1; }
+  #ptt { width: 100%; min-height: var(--ptt-h); border: 0; border-radius: 20px; font: 800 var(--ptt-fs) system-ui, "DejaVu Sans", sans-serif;
+         letter-spacing: 2px; background: #1f2937; color: #fff; }
+  #ptt.air { background: var(--air); }
+  #ptt.armed { background: var(--warn); }
+  #ptt:disabled { background: #5b6472; font-size: 28px; letter-spacing: 0; }
+  .note { color: var(--dim); font-size: 19px; margin-top: 6px; text-align: center; }
+  .note.onair { color: var(--air); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .note .chip { min-height: 44px; margin-left: 10px; font-size: 19px; }
+  .note.licoff { color: var(--warn); font-weight: 700; }
+  .modal { position: fixed; inset: 0; background: rgba(15, 23, 32, .55); display: none; align-items: center; justify-content: center; z-index: 8; }
+  .modal.open { display: flex; }
+  .modalcard { background: var(--card); border-radius: 22px; padding: 24px 28px; width: 860px; display: grid; gap: 18px; }
+  .updrow { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border: 2px solid var(--line); border-radius: 14px; }
+  /* Firmware names are long; on a phone they wrap inside the chip rather than push the card sideways. */
+  #ptfw .chip { white-space: normal; text-align: left; max-width: 100%; padding: 6px 12px; }
+  .dim { color: var(--dim); font-size: var(--fs-s); }
+  .chip.armed { background: var(--warn); border-color: var(--warn); color: #fff; }
+  /* On-screen pad */
+  #pad { position: fixed; inset: 0; background: rgba(15, 23, 32, .55); display: none; align-items: center; justify-content: center; z-index: 9; }
+  #pad.open { display: flex; }
+  #padcard { background: var(--card); border-radius: 22px; padding: 24px; width: 640px; display: grid; gap: 16px; }
+  #padtitle { font-size: 26px; color: var(--dim); font-weight: 700; }
+  #padval { font: 700 56px ui-monospace, "DejaVu Sans Mono", monospace; min-height: 84px; padding: 6px 18px; border-radius: 12px;
+            border: 2px solid var(--line); background: #f8fafc; overflow: hidden; }
+  #padkeys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  #padkeys button, #padact button { min-height: 84px; border-radius: 14px; border: 2px solid var(--line); background: var(--chip);
+                                    font: 700 34px system-ui, "DejaVu Sans", sans-serif; color: var(--ink); }
+  #padact { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #padact .ok { background: var(--sel); color: #fff; border-color: var(--sel); }
+  /* YouTube Live */
+  #ytpill { display: none; font-weight: 800; font-size: 22px; padding: 8px 18px; border-radius: 999px; background: var(--air); color: #fff; }
+  #ytpill.on { display: inline-block; }
+  #ytm .field { grid-template-columns: 170px 1fr; }
+  #ytstate { border-radius: 14px; padding: 12px 18px; background: var(--chip); display: grid; gap: 4px; }
+  #ytstate.live { background: #fde3e1; border: 2px solid var(--air); }
+  #ytstate.error { background: #fff4d6; border: 2px solid var(--warn); }
+  #ytstatelabel { font-size: 28px; font-weight: 800; }
+  #ytstate.live #ytstatelabel { color: var(--air); }
+  #ytkey { flex: 1; min-width: 0; min-height: 56px; font: 600 24px ui-monospace, "DejaVu Sans Mono", monospace; padding: 0 14px;
+           border-radius: 12px; border: 2px solid var(--line); background: #f8fafc; color: var(--ink); }
+  #ytgo { min-height: 80px; border: 0; border-radius: 18px; font: 800 32px system-ui, "DejaVu Sans", sans-serif; background: #1f2937; color: #fff; }
+  #ytgo.live { background: var(--air); }
+  #ytgo:disabled { background: #5b6472; font-size: 24px; }
+  /* Signal log */
+  #sigsum { font: 600 24px ui-monospace, "DejaVu Sans Mono", monospace; }
+  #siggraph svg { display: block; width: 100%; height: auto; touch-action: none; }
+  #sigread { min-height: 28px; }
+  .sigkey { display: inline-block; width: 28px; height: 4px; vertical-align: middle; margin-right: 8px; border-radius: 2px; }
+  /* On-screen keyboard: a general component (overlay text now, a stream key
+     later). Above every other layer, the pad and the overlay editor included. */
+  #kbd { position: fixed; inset: 0; background: rgba(15, 23, 32, .55); display: none; align-items: flex-end; justify-content: center; z-index: 10; padding-bottom: 24px; }
+  #kbd.open { display: flex; }
+  #kbdcard { background: var(--card); border-radius: 22px; padding: 20px 24px; width: min(1500px, 100vw); display: grid; gap: 12px; }
+  #kbdtitle { font-size: 24px; color: var(--dim); font-weight: 700; }
+  #kbdval { font: 600 40px "DejaVu Sans", system-ui, sans-serif; min-height: 72px; padding: 8px 18px; border-radius: 12px;
+            border: 2px solid var(--line); background: #f8fafc; white-space: pre; overflow: hidden; display: flex; align-items: center; }
+  #kbdval::after { content: ""; width: 3px; height: 44px; background: var(--sel); margin-left: 2px; }
+  .kbrow { display: flex; gap: 8px; }
+  .kbrow button { flex: 1; min-width: 52px; min-height: 72px; border-radius: 12px; border: 2px solid var(--line); background: var(--chip);
+                  font: 600 30px "DejaVu Sans", system-ui, sans-serif; color: var(--ink); padding: 0; }
+  .kbrow button.wide { flex: 1.8; font-size: 24px; }
+  .kbrow button.space { flex: 6; }
+  .kbrow button.on, .kbrow button.ok { background: var(--sel); border-color: var(--sel); color: #fff; }
+  /* Overlay editor: the frame at 1280x720 on the left, the selected element
+     on the right. Elements are HTML over the picture; Render swaps in the
+     real ffmpeg output to check. */
+  #ov { position: fixed; inset: 0; background: var(--bg); display: none; flex-direction: column; z-index: 8; }
+  #ov.open { display: flex; }
+  #ovbar { display: flex; gap: 8px; align-items: center; padding: 10px 20px; background: var(--card); border-bottom: 2px solid var(--line); flex-wrap: wrap; }
+  #ovbar h2 { margin: 0 10px 0 0; }
+  #ovbody { flex: 1; min-height: 0; display: flex; gap: 18px; padding: 14px 20px; }
+  #ovleft { display: flex; flex-direction: column; gap: 8px; flex: none; width: min(1280px, calc(100vw - 640px)); }
+  #ovstage { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #30363d center / 100% 100% no-repeat;
+             overflow: hidden; touch-action: none; user-select: none; border-radius: 6px; }
+  #ovstage.rendered .ovel { display: none; }
+  .ovel { position: absolute; font-family: "DejaVu Sans", "Bitstream Vera Sans", Verdana, sans-serif; font-weight: 700;
+          line-height: .766; white-space: pre; cursor: grab; }
+  .ovel.sel { outline: 3px dashed #4da3ff; outline-offset: 8px; }
+  .ovel.band { left: 0; right: 0; }
+  .ovel.empty { opacity: .55; font-style: italic; }
+  #ovmsg { font-size: 20px; color: var(--dim); min-height: 28px; }
+  #ovmsg.err { color: var(--air); font-weight: 700; }
+  #ovside { flex: 1; min-width: 0; background: var(--card); border: 2px solid var(--line); border-radius: 18px; padding: 14px 18px;
+            display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+  #ovside .lbl { color: var(--dim); font-size: 19px; margin-top: 4px; }
+  #ovside .txt { font: 600 28px "DejaVu Sans", system-ui, sans-serif; padding: 10px 16px; border-radius: 12px; border: 2px solid var(--line);
+                 background: #f8fafc; min-height: 60px; white-space: pre-wrap; word-break: break-all; }
+  .swatch { width: 64px; }
+  /* Video file picker */
+  #mediaopen { max-width: 600px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #mediaprob { font-size: 19px; }
+  /* Camera source: one chip per camera and per sound card. Names can be
+     long ("Blackmagic Design ATEM Mini"), so a chip wraps rather than
+     pushing the row off the side of a phone. */
+  #camchips .chip, #camsnd .chip { white-space: normal; text-align: left; max-width: 100%; padding: 4px 12px; line-height: 1.15; }
+  #camchips .chip small, #camsnd .chip small { display: block; font-size: 15px; font-weight: 600; opacity: .75; }
+  #camprob, #camsndprob { font-size: 19px; }
+  /* Stream (OBS) source */
+  #streaminfo { display: grid; gap: 4px; min-width: 0; font-size: 19px; }
+  #streamstate { font-weight: 700; font-size: 21px; }
+  #streamstate.rx { color: var(--ok); }
+  #streamstate.bad { color: var(--air); }
+  #streamobs { color: var(--dim); display: grid; gap: 2px; }
+  #streamobs code { font: 600 19px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--ink); overflow-wrap: anywhere; }
+  #medialist { display: grid; gap: 8px; max-height: 52vh; overflow-y: auto; }
+  /* Test card: one chip per card with its thumbnail (drawn by the daemon
+     from the card itself, so it is the card as it goes out), the name under
+     it. 16:9 like the picture; a chip is still a finger wide and high. */
+  #tcchips .chip { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px 6px;
+                   font-size: 16px; line-height: 1.1; width: 130px; }
+  #tcchips .chip img, .tcrow img { aspect-ratio: 16 / 9; border-radius: 6px; display: block; background: #000; }
+  #tcchips .chip img { width: 114px; }
+  #tcchips .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 118px; }
+  #tcprob { font-size: 19px; }
+  #tclist, #tcusb { display: grid; gap: 8px; max-height: 40vh; overflow-y: auto; }
+  .tcrow img { width: 160px; flex: none; }
+  /* At phone width the thumbnail, the name and the two buttons do not fit
+     on one line: the buttons go under them rather than squeezing the name
+     to a letter a line. */
+  .tcrow { flex-wrap: wrap; }
+  .mrow.tcrow > div { min-width: 150px; }
+  .tcrow b { overflow-wrap: anywhere; }
+  #tcm h3 { margin: 0; font-size: 22px; color: var(--dim); }
+  .mrow { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border: 2px solid var(--line); border-radius: 14px; }
+  .mrow.sel { border-color: var(--sel); background: #e8f0fd; }
+  .mrow > div { flex: 1; min-width: 0; }
+  .mrow b { overflow-wrap: anywhere; }
+  #mediabar { height: 18px; border-radius: 9px; background: var(--chip); overflow: hidden; }
+  #mediabar i { display: block; height: 100%; width: 0; background: var(--sel); }
+  .swatch i { display: inline-block; width: 30px; height: 30px; border-radius: 6px; border: 2px solid #8893a2; vertical-align: middle; }
+  /* Aiming: the margin over the decode threshold as big as the screen
+     allows, coloured so it reads from the mast without reading the digits.
+     A page like QO-100, so the header (ON AIR) and TRANSMIT stay. */
+  #aim { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 16px 28px; flex-direction: column; gap: 14px;
+         background: var(--bg); }
+  body.inaim #aim { display: flex; }
+  #aimtop { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; }
+  #aimstate { font-size: 30px; font-weight: 800; flex: 1 1 300px; min-width: 0; overflow-wrap: anywhere; }
+  #aimbig { border-radius: 24px; padding: 6px 20px 14px; text-align: center; color: #fff; background: #5b6472; }
+  #aimbig.bad { background: var(--air); }
+  #aimbig.marginal { background: var(--warn); }
+  #aimbig.good { background: var(--ok); }
+  #aimnum { font: 800 clamp(88px, min(22vw, 30vh), 340px)/1.05 ui-monospace, "DejaVu Sans Mono", monospace; letter-spacing: -2px; }
+  #aimbig.none #aimnum { font: 800 clamp(56px, min(13vw, 20vh), 220px)/1.1 system-ui, "DejaVu Sans", sans-serif; letter-spacing: 0; }
+  #aimunit { font-size: clamp(20px, 2.6vw, 34px); font-weight: 700; }
+  #aimrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .aimcell { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 8px 16px;
+             display: flex; flex-direction: column; min-width: 0; }
+  .aimcell span { color: var(--dim); font-size: 20px; }
+  .aimcell b { font: 700 46px ui-monospace, "DejaVu Sans Mono", monospace; white-space: nowrap; }
+  #aimpeakcell { flex-direction: row; align-items: center; gap: 12px; justify-content: space-between; }
+  #aimspark { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 8px 12px; }
+  #aimspark svg { display: block; width: 100%; height: clamp(80px, 16vh, 220px); }
+  #aimsparkcap { color: var(--dim); font-size: 19px; }
+  #aimhint:empty { display: none; }
+  #aimonair { display: none; text-align: center; font: 800 32px system-ui, "DejaVu Sans", sans-serif; color: #fff;
+              background: var(--air); border-radius: 14px; padding: 8px; }
+  #aim:fullscreen { padding: 20px; }
+  #aim:fullscreen #aimonair.on { display: block; }
+  /* The page navigation sits in the header row at full size; display:
+     contents keeps the 1920-wide touchscreen exactly as it was laid out,
+     and the narrow rules below give it a row of its own. */
+
+  /* Narrow screens: a laptop window, a tablet, a phone on the antenna mast.
+     The touchscreen layout above is the one the operator asked for (large,
+     readable across the shack) and is left alone; below 1100 px the header
+     wraps onto a second row of navigation, and below 640 px the labels move
+     above their controls, so nothing is wider than the screen. A sideways
+     scroll on a phone hides TRANSMIT's right half and the ON AIR state. */
+  main > section, #qo > section, #setgrid > section { min-width: 0; }
+  #remotebar { flex-wrap: wrap; }
+  .modalcard { max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow-y: auto;
+               grid-template-columns: minmax(0, 1fr); }
+  #padcard { max-width: calc(100vw - 24px); }
+  #mediaopen { max-width: 100%; }
+  /* The page buttons get a row of their own below 1800 px: with HamTV they
+     no longer fit beside the callsign at a laptop's 1280 (YouTube was cut
+     off under Settings), and with Log the header wrapped "Stand by" onto
+     two lines up to about 1750. The touchscreen's 1920 keeps one row. */
+  @media (max-width: 1800px) {
+    header { flex-wrap: wrap; gap: 8px 14px; }
+    #nav { order: 10; flex-basis: 100%; gap: 14px; flex-wrap: wrap; }
+    /* Labels beside their groups, not above them, on a row of its own. */
+    .navgrp { flex-direction: row; align-items: center; gap: 8px; }
+    .navlab { padding: 0; }
+    /* A laptop's 800 px less header and footer: all nine still in view. */
+    #setcats { gap: 6px; }
+    #setcats .chip { min-height: 52px; font-size: 21px; }
+  }
+  @media (max-width: 1100px) {
+    header { flex-wrap: wrap; gap: 8px 14px; padding: 8px 16px; }
+    header h1 { font-size: 28px; }
+    #call { font-size: 24px; padding: 4px 12px; }
+    #state { font-size: 22px; padding: 6px 16px; }
+    #nav { gap: 10px; }
+    .navlab { display: none; }
+    #nav .chip { min-height: 56px; font-size: 20px; padding: 0 12px; }
+    #ovbody { flex-direction: column; overflow-y: auto; }
+    #ovleft { width: 100%; }
+    #ovside { flex: none; }
+    .kbrow button { min-width: 0; }
+    #setwrap { grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
+    #setcats .chip { font-size: 20px; padding: 0 14px; }
+  }
+  @media (max-width: 640px) {
+    #qowf { height: 160px; }
+    #qochatlog { height: 320px; font-size: 16px; padding: 8px 10px; }
+    #qochatbody { flex-direction: column; }
+    #qochatusers { width: auto; height: 140px; }
+    .wft { font-size: 12px; }
+    body { font-size: 20px; }
+    header h1 { font-size: 24px; }
+    #call { font-size: 20px; padding: 4px 10px; }
+    #state { font-size: 18px; padding: 6px 12px; }
+    /* The channel rate is a detail a phone can do without: with it, the
+       header took three rows and a quarter of the screen. */
+    #setback { min-width: 0; min-height: 52px; font-size: 20px; padding: 0 12px; }
+    /* Room for Back and the page name; the callsign is on the Settings page. */
+    body.insettings #call, body.inqo #call, body.inaim #call, body.inham #call { display: none; }
+    #ham, body.inham #ham { padding: 10px 10px; gap: 12px; }
+    #ham .field { grid-template-columns: 1fr; gap: 4px; }
+    #hamcount { font-size: 32px; }
+    #hampasses { font-size: 17px; }
+    #hampasses th { font-size: 15px; }
+    #hampasses td, #hampasses th { padding: 5px 4px; }
+    #hampasses .az { display: none; }
+    #isspill { font-size: 17px; padding: 6px 12px; }
+    /* Seven pages do not fit one row at phone width without cutting the
+       labels short; two rows of four keep every name whole. */
+    /* The page buttons fold into Pages: open, they are a full-width list
+       in their groups, at finger size, under the header. */
+    #navtoggle { display: inline-block; min-height: 52px; font-size: 19px; padding: 0 12px; margin-left: auto; }
+    #nav { display: none; }
+    body.navopen #nav { display: grid; gap: 8px; }
+    body.navopen .navgrp { flex-direction: column; align-items: stretch; gap: 2px; }
+    body.navopen .navbtns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    body.navopen .navlab { display: block; }
+    #nav .chip { font-size: 18px; padding: 0 4px; min-width: 0; min-height: 56px; }
+    #pills { margin-left: 0; gap: 6px; }
+    #recpill { font-size: 17px; padding: 6px 10px; }
+    /* The category menu becomes a row of chips above the category, scrolled
+       sideways on its own: nine names do not fit 390 px, and the page
+       itself must never scroll sideways. */
+    #setwrap { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    /* top/padding: sticky stops inside #settings' 10 px padding, which would
+       otherwise show the category scrolling past above the row. */
+    /* Two rows of categories that all show, rather than one row that
+       scrolled sideways with nothing to say it did ("Stati…"). */
+    #setcats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px 0 6px; top: -10px; margin-top: -10px; background: var(--bg);
+               scrollbar-width: thin; }
+    #setcats .chip { min-height: 52px; font-size: 16px; padding: 0 6px; white-space: normal; line-height: 1.1; text-align: center; min-width: 0; }
+    main, #settings, #qo, body.inqo #qo { padding: 10px 10px; gap: 12px; }
+    section { padding: 12px 12px; border-radius: 14px; }
+    h2 { font-size: 21px; }
+    .field, #qo .field, #setgrid .field, #ytm .field { grid-template-columns: 1fr; gap: 4px; }
+    .field > span:empty { display: none; }
+    .field > * { min-width: 0; }
+    header { gap: 8px 8px; }
+    #ytgo { font-size: 22px; min-height: 64px; }
+    #ytgo:disabled { font-size: 18px; }
+    .big { font-size: 30px; }
+    .big small { font-size: 18px; }
+    .stepper .chip { min-width: 64px; }
+    #rxlabel, #qorxlabel { font-size: 24px; }
+    #rxdetail, #qorxdetail { font-size: 19px; }
+    #rxbox, #qorx { padding: 10px 12px; }
+    .rxcard { gap: 8px; padding: 6px 8px; }
+    .rxn { font-size: 22px; min-width: 32px; height: 32px; }
+    .rxmain b { font-size: 19px; }
+    .rxmain small { font-size: 15px; }
+    .rxbadge { display: none; }
+    .rxrow .chip { min-width: 0; padding: 0 6px; font-size: 17px; }
+    #qosigs .chip { min-width: 0; }
+    .keylist { grid-template-columns: auto 1fr; }
+    #paddraw { gap: 8px; padding: 10px; }
+    .pc { font-size: 14px; }
+    .pc.screen-key { font-size: 14px; }
+    .pc small { font-size: 12px; }
+    footer { padding: 8px 10px 10px; }
+    #ptt { min-height: 72px; font-size: 28px; letter-spacing: 1px; }
+    #ptt:disabled { font-size: 18px; }
+    .note { font-size: 14px; }
+    .modalcard { padding: 14px 14px; gap: 12px; border-radius: 16px; }
+    .modalcard > div:first-child { flex-wrap: wrap; }
+    .updrow { padding: 10px 12px; gap: 10px; }
+    .updrow .chip, #updcheck { flex: none; }
+    #aim { padding: 10px; gap: 10px; }
+    #aimstate { font-size: 22px; }
+    #aimrow { gap: 6px; }
+    .aimcell { padding: 6px 8px; border-radius: 12px; }
+    .aimcell span { font-size: 15px; }
+    .aimcell b { font-size: 26px; }
+    #aimpeakcell { flex-direction: column; align-items: stretch; gap: 4px; }
+    #aimsparkcap { font-size: 15px; }
+    #sigsum { font-size: 17px; }
+    #kbd { padding-bottom: 0; }
+    #kbdcard { padding: 10px 8px; gap: 8px; border-radius: 16px 16px 0 0; }
+    #kbdval { font-size: 28px; min-height: 52px; }
+    .kbrow { gap: 4px; flex-wrap: wrap; }
+    .kbrow button { min-width: 28px; min-height: 52px; font-size: 22px; }
+    .kbrow button.wide { font-size: 17px; }
+    #sigspan { flex-basis: 100%; margin-left: 0; }
+    #padcard { padding: 14px; gap: 10px; }
+    #padval { font-size: 40px; min-height: 64px; }
+    #padkeys button, #padact button { min-height: 64px; font-size: 28px; }
+    #ovbar { padding: 8px 10px; gap: 6px; }
+    #ovbody { padding: 10px; gap: 10px; }
+  }
+  /* Network. The banner is what a box with no keyboard says when it starts:
+     where to open this console from. Green and plain so it reads as news,
+     not a fault; it goes once tapped and comes back if an address changes. */
+  #netbanner { display: none; background: #dff3e6; border-bottom: 2px solid var(--ok); padding: 10px 28px;
+               gap: 8px 18px; align-items: center; flex-wrap: wrap; font-size: 22px; }
+  #netbanner.on { display: flex; }
+  #netbanner.warn { background: #fff4d6; border-bottom-color: var(--warn); }
+  #netbanner b { font: 700 26px ui-monospace, "DejaVu Sans Mono", monospace; overflow-wrap: anywhere; }
+  #netbanner .dim { font-size: 19px; }
+  #netbanner .chip { margin-left: auto; }
+  /* The clock warning: amber, since it is a fault, but only a banner - nothing
+     on air depends on the time. Dismissed for this page; back at a reload. */
+  #clockbanner { display: none; background: #fff4d6; border-bottom: 2px solid var(--warn); padding: 10px 28px;
+                 gap: 8px 18px; align-items: center; flex-wrap: wrap; font-size: 21px; }
+  #clockbanner.on { display: flex; }
+  #clockbanner > div { flex: 1 1 600px; min-width: 0; }
+  #clockbanner .dim { font-size: 19px; }
+  /* Trying OpenHamShack from the USB stick: blue, and on every page with no
+     Dismiss - forgetting it is how an evening's settings and recordings
+     would be lost at shutdown. */
+  #livebanner { display: none; background: #e3eefc; border-bottom: 2px solid #2f6fd0; padding: 10px 28px;
+                gap: 8px 18px; align-items: center; flex-wrap: wrap; font-size: 21px; }
+  #livebanner.on { display: flex; }
+  #livebanner > div { flex: 1 1 600px; min-width: 0; }
+  #livebanner .dim { font-size: 19px; }
+  /* Security updates waiting for a restart: news, not a fault. */
+  #osbanner { display: none; background: #dff3e6; border-bottom: 2px solid var(--ok); padding: 10px 28px;
+              gap: 8px 18px; align-items: center; flex-wrap: wrap; font-size: 21px; }
+  #osbanner.on { display: flex; }
+  #osbanner > div { flex: 1 1 500px; min-width: 0; }
+  /* Updating at start-up: blue while it installs (nothing to do but wait,
+     and the console is about to go), green once it has, amber when it
+     could not. Dismissable once it has finished. */
+  #autobanner { display: none; background: #e3eefc; border-bottom: 2px solid #2f6fd0; padding: 10px 28px;
+                gap: 8px 18px; align-items: center; flex-wrap: wrap; font-size: 21px; }
+  #autobanner.on { display: flex; }
+  #autobanner.done { background: #dff3e6; border-bottom-color: var(--ok); }
+  #autobanner.bad { background: #fff4d6; border-bottom-color: var(--warn); }
+  #autobanner > div { flex: 1 1 500px; min-width: 0; }
+  #autobanner .dim { font-size: 19px; }
+  #autobanner.busy #autook { display: none; }
+  /* The wizard's first step: the start-up update, said as it happens. */
+  #wupdmsg { font-size: 22px; }
+  #wupdbar { height: 12px; border-radius: 6px; background: var(--line, #d9dee5); overflow: hidden; }
+  #wupdbar > i { display: block; height: 100%; width: 0; background: #2f6fd0; transition: width .4s; }
+  #wupdbar.spin > i { width: 30%; animation: wupdspin 1.4s ease-in-out infinite; }
+  @keyframes wupdspin { from { margin-left: -30%; } to { margin-left: 100%; } }
+  /* First-run setup: a card over everything but the pad and keyboard, one
+     question at a time, Back and Next at the bottom where a thumb is. The
+     card scrolls inside itself, so a laptop's 768 px keeps both in view. */
+  #setup { position: fixed; inset: 0; background: rgba(15, 23, 32, .55); display: none; align-items: center;
+           justify-content: center; z-index: 8; padding: 16px; }
+  #setup.open { display: flex; }
+  #setupcard { background: var(--card); border-radius: 22px; width: min(1150px, 100%); max-height: 100%; display: flex;
+               flex-direction: column; overflow: hidden; }
+  #setuphead { display: flex; align-items: center; gap: 8px 16px; padding: 16px 24px; border-bottom: 2px solid var(--line); flex-wrap: wrap; }
+  #setuphead h2 { margin: 0; }
+  #setuplater { margin-left: auto; }
+  #setupbody { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 24px; }
+  .sstep { display: none; gap: 14px; }
+  .sstep.cur { display: grid; }
+  .sstep h3 { margin: 0; font-size: 30px; }
+  .sstep .lead { margin: 0; font-size: 22px; }
+  #setup .field { grid-template-columns: 170px 1fr; }
+  .wbig { min-height: 72px; min-width: 280px; font: 700 32px ui-monospace, "DejaVu Sans Mono", monospace; text-align: left; padding: 0 20px; }
+  #setupnav { display: flex; gap: 10px; padding: 14px 24px; border-top: 2px solid var(--line); }
+  #setupnav .chip { min-height: 72px; min-width: 200px; font-size: 26px; }
+  #setupnext { margin-left: auto; }
+  #wsum { display: grid; gap: 6px; }
+  #wsum button { display: grid; grid-template-columns: 170px 1fr auto; gap: 4px 14px; align-items: center; text-align: left;
+                 padding: 10px 16px; border-radius: 14px; border: 2px solid var(--line); background: var(--card); color: var(--ink);
+                 font: inherit; font-size: 21px; cursor: pointer; min-height: 64px; }
+  #wsum button > * { min-width: 0; overflow-wrap: anywhere; }
+  #wsum button span { color: var(--dim); }
+  #wsum button em { font-style: normal; color: var(--sel); font-weight: 700; }
+  #wsum button.bad { border-color: var(--air); }
+  /* Self-test results, in the wizard and in Settings > Station alike. */
+  .stlist { display: grid; gap: 8px; }
+  .strow { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 2px 14px; align-items: start; padding: 8px 14px;
+           border-radius: 14px; border: 2px solid var(--line); background: var(--card); }
+  .strow .stbadge { grid-row: 1 / span 3; font-weight: 800; font-size: 17px; text-align: center; border-radius: 999px; padding: 5px 0;
+                    background: var(--chip); color: var(--dim); }
+  .strow.pass .stbadge { background: var(--ok); color: #fff; }
+  .strow.warn { border-color: var(--warn); background: #fff4d6; }
+  .strow.warn .stbadge { background: var(--warn); color: #fff; }
+  .strow.fail { border-color: var(--air); background: #fde3e1; }
+  .strow.fail .stbadge { background: var(--air); color: #fff; }
+  .strow.running .stbadge { background: var(--sel); color: #fff; }
+  .strow b { font-size: 21px; }
+  .strow .stdet { color: var(--dim); font-size: 19px; overflow-wrap: anywhere; }
+  .strow .stfix { font-size: 19px; overflow-wrap: anywhere; }
+  @media (max-width: 1100px) {
+    #setup .field { grid-template-columns: 130px 1fr; }
+    #wsum button { grid-template-columns: 130px 1fr auto; }
+  }
+  @media (max-width: 640px) {
+    #clockbanner { padding: 8px 12px; font-size: 17px; }
+    #setup { padding: 0; }
+    #setupcard { border-radius: 0; height: 100%; }
+    #setuphead, #setupbody, #setupnav { padding-left: 12px; padding-right: 12px; }
+    .sstep h3 { font-size: 24px; }
+    .sstep .lead { font-size: 18px; }
+    #setup .field { grid-template-columns: 1fr; gap: 4px; }
+    .wbig { min-width: 0; width: 100%; font-size: 26px; }
+    #setupnav .chip { flex: 1; min-width: 0; font-size: 21px; }
+    #wsum button { grid-template-columns: 1fr auto; font-size: 18px; }
+    #wsum button span { grid-column: 1 / -1; }
+    .strow { grid-template-columns: 1fr; padding: 8px 10px; }
+    .strow .stbadge { grid-row: auto; justify-self: start; padding: 3px 14px; }
+  }
+  /* A static address waiting to be kept: on every page, since it undoes
+     itself and the operator must see that happening. */
+  #netpend { display: none; background: #fff4d6; border-bottom: 2px solid var(--warn); padding: 10px 28px;
+             gap: 8px 16px; align-items: center; flex-wrap: wrap; font-size: 21px; }
+  #netpend.on { display: flex; }
+  #netpend .chips { margin-left: auto; }
+  /* A display change on trial: the same bar, larger, since it may be read on
+     a screen that has just changed size or turned, and Keep is the one
+     thing that must be easy to hit. */
+  /* The transmit time-out's last minute: on every page, red-edged like ON
+     AIR, and Keep transmitting as large as the display bar's Keep - it is
+     the one thing to hit before the carrier goes. */
+  #txtimeout { display: none; background: #fde4e2; border-bottom: 3px solid var(--air); padding: 12px 28px;
+               gap: 10px 18px; align-items: center; flex-wrap: wrap; font-size: 24px; }
+  #txtimeout.on { display: flex; }
+  /* A PA relay that would not switch off: on every page until it does. */
+  #pttstuck { display: none; background: var(--air); color: #fff; padding: 12px 28px; font-size: 21px; line-height: 1.35;
+              overflow-wrap: anywhere; }
+  #pttstuck.on { display: block; }
+  /* Beside ON AIR: whether the PA/relay output is keyed. Shown only with an output set. */
+  #papill { display: none; font-weight: 700; font-size: 22px; padding: 8px 16px; border-radius: 999px;
+            background: var(--chip); color: var(--dim); white-space: nowrap; }
+  #papill.show { display: inline-block; }
+  #papill.on { background: var(--air); color: #fff; }
+  #papill.bad { background: #fde4e2; color: var(--air); border: 2px solid var(--air); }
+  /* A laptop's battery (battery.js), beside ON AIR: only with a battery.
+     The icon above its figure, as the page groups put their names above
+     their buttons: side by side it was 128 px, and the one-screen header
+     at 1920 had 110 to spare. The header row is already as tall as the
+     page buttons and their labels, so the stack costs no height.
+     Neutral while all is well, amber when low, red when critical, as the
+     other pills say a state; never blue, which is the choice in force. The
+     ring is a shadow, not a border, so a change of level never moves the
+     pills beside it by two pixels, and the figure's digits are all one
+     width, so 9% to 100% never does either. */
+  #battpill { display: none; flex-direction: column; align-items: center; gap: 3px; font-weight: 800; font-size: 20px;
+              line-height: 1; padding: 6px 8px 5px; min-width: 62px; border-radius: 12px; background: var(--chip);
+              color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #battpill.show { display: inline-flex; }
+  #battpill svg { flex: none; width: 34px; height: 18px; }
+  #battpill.low { background: #fff4d6; color: var(--warn); box-shadow: inset 0 0 0 2px var(--warn); }
+  #battpill.critical { background: #fde4e2; color: var(--air); box-shadow: inset 0 0 0 2px var(--air); }
+  #battlow { background: #fff4d6; border-bottom: 2px solid var(--warn); }
+  /* Urgent: the charger lost during an over in amber, a critical battery
+     in red, as the PA relay that would not let go is. */
+  #battcrit { background: #fff4d6; border-bottom: 3px solid var(--warn); }
+  #battcrit.crit { background: var(--air); color: #fff; border-bottom-color: var(--air); }
+  #battcrit > span { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+  #pttrelays .chip { white-space: normal; text-align: left; max-width: 100%; padding: 4px 12px; line-height: 1.15; }
+  #pttrelays .chip small { display: block; font-size: 15px; font-weight: 600; opacity: .75; }
+  #txtimeout > span { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+  #txtimeout b.left { font: 800 34px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--air); }
+  #txkeep { min-height: 72px; min-width: 260px; font-size: 26px; background: var(--air); color: #fff; }
+  #disppend { display: none; background: #fff4d6; border-bottom: 3px solid var(--warn); padding: 12px 28px;
+              gap: 10px 18px; align-items: center; flex-wrap: wrap; font-size: 24px; }
+  #disppend.on { display: flex; }
+  #disppend > span { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+  #disppend b.left { font: 800 34px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--warn); }
+  #disppend .chip { min-height: 72px; min-width: 170px; font-size: 26px; }
+  .dispout { border: 2px solid var(--line); border-radius: 14px; padding: 10px 14px; display: grid; gap: 8px; }
+  .dispout.off { background: var(--bg); }
+  .dispout .nethead b { font-size: 22px; }
+  .dispout .field { grid-template-columns: 150px 1fr; }
+  .dispout .chip small { font-size: 15px; font-weight: 600; opacity: .8; margin-left: 4px; }
+  .role { font-weight: 800; font-size: 17px; padding: 2px 10px; border-radius: 999px; background: var(--chip); }
+  .role.tv, .role.console, .role.single { background: #1f2937; color: #fff; }   /* information, not a choice: not blue */
+  #displist { display: grid; gap: 10px; }
+  #displist > *, .dispout > * { min-width: 0; }
+  .netif { border: 2px solid var(--line); border-radius: 14px; padding: 10px 14px; display: grid; gap: 6px; }
+  .netif.radio, .netif.down { background: var(--bg); }
+  .nethead { display: flex; gap: 6px 12px; align-items: baseline; flex-wrap: wrap; }
+  .nethead b { font-size: 22px; }
+  .netaddr { font: 700 24px ui-monospace, "DejaVu Sans Mono", monospace; overflow-wrap: anywhere; }
+  .wrow { display: flex; gap: 10px; align-items: center; padding: 8px 14px; border: 2px solid var(--line); border-radius: 14px; }
+  .wrow > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .wrow.cur { border-color: var(--ok); background: #dff3e6; }
+  .bars { font: 700 20px ui-monospace, "DejaVu Sans Mono", monospace; letter-spacing: -2px; color: var(--ok); }
+  #wifilist { display: grid; gap: 8px; max-height: 52vh; overflow-y: auto; }
+  #netipform .field { grid-template-columns: 170px 1fr; }
+  #netipform .chip { min-width: 240px; font-family: ui-monospace, "DejaVu Sans Mono", monospace; }
+  #netipbar { justify-content: flex-end; }
+  #netipbar .chip { min-height: 64px; min-width: 160px; }
+  #netlist > *, .netif > * { min-width: 0; }
+  .netif .expl { overflow-wrap: anywhere; }
+  @media (max-width: 640px) {
+    #netbanner, #netpend { padding: 8px 12px; font-size: 17px; }
+    #netbanner b { font-size: 19px; }
+    #netbanner .chip, #netpend .chips { margin-left: 0; }
+    #txtimeout { padding: 8px 12px; font-size: 18px; }
+    #pttstuck { padding: 8px 12px; font-size: 18px; }
+    #papill { font-size: 18px; padding: 6px 12px; }
+    #battpill { font-size: 13px; padding: 3px 4px; min-width: 0; border-radius: 8px; }
+    #battpill svg { width: 22px; height: 12px; }
+    #txtimeout b.left { font-size: 26px; }
+    #txkeep { flex: 1 1 100%; min-width: 0; min-height: 60px; font-size: 22px; }
+    #disppend { padding: 8px 12px; font-size: 18px; }
+    #disppend b.left { font-size: 26px; }
+    #disppend .chips { width: 100%; }
+    #disppend .chip { flex: 1; min-width: 0; min-height: 60px; font-size: 22px; }
+    .dispout .field { grid-template-columns: 1fr; }
+    .netaddr { font-size: 19px; }
+    #netipform .field { grid-template-columns: 96px 1fr; }
+    #netipform .chip { min-width: 0; width: 100%; }
+  }
+  /* Log: a page like HamTV, so the header (ON AIR) and TRANSMIT stay - a
+     contact is logged while it is happening. Suggestions sit on top, since
+     they are what wants a tap; the log itself takes the rest of the width. */
+  #logp { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: var(--page-pad); flex-direction: column; gap: 20px; }
+  body.inlog #logp { display: flex; }
+  body.inlog main, body.inlog #h1main { display: none; }
+  #h1log { display: none; }
+  body.inlog #h1log { display: inline; }
+  body.inlog #setback { display: inline-block; }
+  #logbadge { display: none; margin-left: 8px; min-width: 30px; padding: 0 8px; border-radius: 999px; background: var(--warn);
+              color: #fff; font-weight: 800; font-size: 18px; line-height: 28px; }
+  #logbadge.on { display: inline-block; }
+  .logsug { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border: 2px solid var(--warn);
+            background: #fff4d6; border-radius: 14px; }
+  .logsug.live { border-color: var(--ok); background: #dff3e6; }
+  .logsug > div { flex: 1 1 420px; min-width: 0; overflow-wrap: anywhere; }
+  .logsug b { font: 800 26px ui-monospace, "DejaVu Sans Mono", monospace; margin-right: 10px; }
+  .logsug .chips { flex: none; }
+  .logsug .chip { min-width: 110px; }
+  #logsugs { display: grid; gap: 8px; }
+  #logtools { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; }
+  #logtools a.chip { display: inline-flex; align-items: center; text-decoration: none; }
+  /* Diagnostics (Settings > Software & power). Each problem is marked by
+     colour and by its word, so it still reads on a washed-out screen. */
+  #diagprobs { display: grid; gap: 6px; }
+  .diagp { display: flex; gap: 12px; align-items: baseline; font-size: 21px; line-height: 1.3; overflow-wrap: anywhere; }
+  .diagp b { flex: none; min-width: 112px; font-size: 17px; text-transform: uppercase; letter-spacing: 1px; }
+  .diagp.error b { color: var(--air); }
+  .diagp.warn b { color: var(--warn); }
+  .diagp.info b { color: var(--dim); }
+  #diagsec a.chip { display: inline-flex; align-items: center; text-decoration: none; }
+  #diagsec a.chip.off { pointer-events: none; opacity: .35; }
+  #diagsec .chip { padding: 0 14px; }
+  /* Backup (Settings > Backup). A file is a card: what is in it, then the
+     two choices and Restore, so nothing is restored that was not read. */
+  #backupsec a.chip, #backupsec label.chip { display: inline-flex; align-items: center; text-decoration: none; cursor: pointer; }
+  #backupsec .chip { padding: 0 14px; max-width: 100%; }
+  #backupsec .chip.off { pointer-events: none; opacity: .35; }
+  [data-cat="backup"] [hidden] { display: none !important; }
+  #bkfiles { display: grid; gap: 6px; }
+  #bkfiles .chip { text-align: left; overflow-wrap: anywhere; padding: 6px 14px; }
+  #bkshow { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: grid; gap: 8px; }
+  #bkshow[hidden] { display: none; }
+  #bkshow .bkhead { font-size: 24px; font-weight: 800; overflow-wrap: anywhere; }
+  #bkshow ul { margin: 0; padding-left: 22px; color: var(--dim); font-size: 18px; overflow-wrap: anywhere; }
+  #bkmsg.ok, #bkrmsg.ok { color: var(--ok); }
+  #diagref { font-size: 22px; line-height: 1.35; overflow-wrap: anywhere; }
+  #diagref b { font: 800 34px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--ok); }
+  #diagmsg.ok { color: var(--ok); }
+  /* The note shows what was typed, cut to one line: the whole of it is in
+     the keyboard a tap away. */
+  #diagnote { min-width: 220px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+              text-align: left; padding: 0 16px; }
+  #diagnote.empty { color: var(--dim); }
+  /* "What is sent": a line of text that opens, at finger height. */
+  .whatbtn { min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--ink);
+             font: 600 19px system-ui, "DejaVu Sans", sans-serif; text-decoration: underline; cursor: pointer; }
+  .whatsent { border-left: 4px solid var(--line); padding-left: 12px; }
+  #autolast b { font: 800 24px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--ok); }
+  @media (max-width: 640px) {
+    /* The word above the problem, not beside it: a 112px column leaves a
+       phone four words a line. */
+    .diagp { display: block; font-size: 18px; }
+    .diagp b { display: block; min-width: 0; font-size: 14px; }
+    #diagsec .chip { flex: 1 1 auto; min-height: 48px; font-size: 17px; padding: 0 10px; }
+    #diagref b { font-size: 28px; }
+  }
+  #logcounts { font: 600 21px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--dim); }
+  #loglist { display: grid; gap: 6px; }
+  .logrow { display: grid; grid-template-columns: 250px minmax(180px, 1.2fr) 1fr 1.3fr 110px; gap: 4px 16px; align-items: center;
+            text-align: left; padding: 8px 14px; border-radius: 14px; border: 2px solid var(--line); background: var(--card);
+            color: var(--ink); font: inherit; font-size: 20px; cursor: pointer; width: 100%; }
+  .logrow:hover { border-color: var(--sel); }
+  .logrow > * { min-width: 0; overflow-wrap: anywhere; }
+  .logrow .lt { font: 600 19px ui-monospace, "DejaVu Sans Mono", monospace; color: var(--dim); }
+  .logrow .lc { font: 800 26px ui-monospace, "DejaVu Sans Mono", monospace; }
+  .logrow small { display: block; color: var(--dim); font-size: 17px; }
+  .logrow .lr { font: 600 18px ui-monospace, "DejaVu Sans Mono", monospace; }
+  .logtag { font-size: 15px; font-weight: 800; padding: 2px 10px; border-radius: 999px; background: var(--chip); white-space: nowrap; }
+  .logtag.sat { background: var(--card); color: var(--ink); border: 2px solid var(--ink); }
+  #loged .modalcard { width: min(1250px, 96vw); max-height: 94vh; overflow-y: auto; gap: 10px; }
+  #loged .field { grid-template-columns: 190px 1fr; }
+  #loged .lv { min-height: 56px; min-width: 150px; font: 700 24px ui-monospace, "DejaVu Sans Mono", monospace; text-align: left; padding: 0 14px; }
+  #loged .lv.empty { color: var(--dim); font-weight: 500; font-family: system-ui, "DejaVu Sans", sans-serif; }
+  #loged .lv.wide { flex: 1 1 360px; }
+  #loged .row2 { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; }
+  .logmode { display: grid; gap: 5px; }
+  .logmode .chip { min-width: 0; padding: 0 10px; min-height: 48px; font-size: 19px; }
+  #logedbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; position: sticky; bottom: -24px;
+              background: var(--card); padding: 10px 0 4px; }
+  #logedbar .chip { min-height: 64px; min-width: 140px; font-size: 23px; }
+  #logedsave { margin-left: auto; }
+  @media (max-width: 1100px) {
+    .logrow { grid-template-columns: 200px 1fr 1fr; }
+    .logrow .lr { grid-column: 2 / -1; }
+  }
+  @media (max-width: 640px) {
+    #logp { padding: 10px; gap: 12px; }
+    body.inlog #call { display: none; }
+    .logsug { padding: 8px 10px; }
+    .logsug b { font-size: 21px; }
+    .logsug .chips { width: 100%; }
+    .logsug .chip { flex: 1; min-width: 0; padding: 0 4px; font-size: 18px; }
+    #logtools h2 { flex-basis: 100%; }
+    #logtools > span[style] { display: none; }
+    #logtools .chip, #logtools2 .chip { flex: 1 1 auto; min-height: 48px; font-size: 17px; padding: 0 8px; min-width: 0; }
+    #logbands { flex: 1 1 100%; }
+    .logrow { grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 10px; font-size: 17px; }
+    .logrow .lt { grid-column: 1 / -1; font-size: 15px; }
+    .logrow .lc { font-size: 21px; }
+    .logrow .lr { grid-column: 1 / -1; font-size: 15px; }
+    #logcounts { font-size: 16px; }
+    #loged .field { grid-template-columns: 1fr; gap: 4px; }
+    #loged .lv { min-width: 0; font-size: 20px; height: auto; padding: 6px 12px; overflow-wrap: anywhere; }
+    #logedbar .chip { flex: 1; min-width: 0; font-size: 19px; }
+    #logbadge { font-size: 14px; line-height: 20px; min-width: 22px; padding: 0 5px; margin-left: 4px; }
+  }
+  /* Help: the user guide (/help, the box's own copy) in a frame, as a page
+     like Settings so the header and TRANSMIT stay. It hides whatever page
+     or window was showing without closing it - an open Updates or Signal
+     window keeps polling underneath - so Back returns to exactly that. */
+  #helpv { display: none; flex: 1; min-height: 0; flex-direction: column; background: var(--bg); }
+  body.inhelp #helpv { display: flex; }
+  body.inhelp > main, body.inhelp > #settings, body.inhelp > #qo, body.inhelp > #ham, body.inhelp > #aim,
+    body.inhelp > #logp, body.inhelp .modal.open { display: none !important; }
+  #helpbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 28px;
+             background: var(--card); border-bottom: 2px solid var(--line); }
+  #helpbar .chip { min-height: 64px; padding: 0 16px; }
+  #helptitle { font-size: 26px; }
+  #helpsearch { flex: 1 1 300px; min-width: 0; text-align: left; color: var(--dim); background: #f8fafc;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #helpsearch.q { color: var(--ink); }
+  #helpframe { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--bg); }
+  /* "?" beside a control: opens the guide at the section about it. Read-only,
+     so a remote browser without the PIN can use it where the controls
+     around it are dimmed and untappable. */
+  .helpq { min-width: 48px; height: 48px; padding: 0; margin-left: 10px; border-radius: 999px; border: 2px solid var(--line);
+           background: var(--card); color: var(--sel); font: 800 26px system-ui, "DejaVu Sans", sans-serif;
+           letter-spacing: 0; text-transform: none; vertical-align: middle; cursor: pointer; flex: none; }
+  .chips .helpq { margin-left: 0; align-self: center; }
+  body.remoteview .helpq { pointer-events: auto; }
+  @media (max-width: 640px) {
+    #helpbar { padding: 8px 10px; gap: 6px; }
+    #helpbar .chip { min-height: 52px; font-size: 17px; padding: 0 10px; }
+    #helptitle { display: none; }
+    #helpsearch { flex-basis: 100%; order: 5; }
+    .helpq { min-width: 40px; height: 40px; font-size: 22px; margin-left: 6px; }
+  }
+  /* The main page's summaries (sheets.js): what is set, in words, with the
+     window that changes it a tap away. */
+  .sumrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; }
+  .sumrow > b { font: 700 26px ui-monospace, "DejaVu Sans Mono", monospace; overflow-wrap: anywhere; min-width: 0; }
+  #picsum { font: 700 24px system-ui, "DejaVu Sans", sans-serif; }
+  .sumrow .chip { min-height: 56px; padding: 0 18px; }
+  .sheet .modalcard { width: min(1250px, 96vw); }
+  .sheet .field { grid-template-columns: 170px 1fr; }
+  .srband { align-self: center; font-size: 16px; font-weight: 700; color: var(--dim); text-transform: uppercase;
+            letter-spacing: 1px; flex-basis: 100%; }
+  #robust { display: grid; gap: 4px; padding: 8px 0; }
+  #robust[hidden] { display: none; }
+  .robscale { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; font-size: 19px;
+              color: var(--dim); font-weight: 600; }
+  .robbar { position: relative; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--ok), var(--warn), var(--air)); }
+  .robbar i { position: absolute; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
+              background: var(--card); border: 4px solid var(--ink); }
+  #rx1row[hidden], #txmhintrow[hidden] { display: none; }
+  #rxacts .chip { min-height: 56px; padding: 0 18px; }
+  #logsugline { display: none; }
+  #logsugline.on { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px;
+                   border: 2px solid var(--warn); background: #fff4d6; border-radius: 14px; font-size: 21px; }
+  #logsugline span { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
+  #logsugline b { font: 800 24px ui-monospace, "DejaVu Sans Mono", monospace; }
+  @media (max-width: 640px) {
+    .sheet .field { grid-template-columns: 1fr; }
+    .sumrow > b { font-size: 21px; }
+    #picsum { font-size: 19px; }
+  }
+  /* One screen (screen.js, screens.py). The picture is part of the layout:
+     Split gives it a column on the left under the header, the page beside
+     it; Picture gives it the screen above a bar. #picslot is where mpv is
+     put - the page reports its rectangle - so it must never move under
+     anything that changes often: the notices and the view-only bar sit
+     over the page column, not across the top. */
+  #modesw, #pictcol, #picbar { display: none; }
+  body.onescreen #modesw { display: flex; }
+  /* The box's own screen with the picture switch: the header has one more
+     group to fit on one row at 1920, so it closes up, and Aa goes (this
+     screen is Touch unless chosen in Settings > Screens, where it stays). */
+  body.onescreen header { gap: 8px 12px; }
+  body.onescreen #densbtn { display: none; }
+  /* And a laptop's battery meter smaller: with the update dot on Settings
+     the row had about 90 px left, and the meter at its widest ("100%") was 78. */
+  body.onescreen #battpill { font-size: 16px; padding: 4px 5px; min-width: 0; gap: 2px; }
+  body.onescreen #battpill svg { width: 28px; height: 15px; }
+  .seg { gap: 0; }
+  .seg .chip { border-radius: 0; margin-left: -2px; min-height: 60px; font-size: 21px; padding: 0 14px; }
+  .seg .chip:first-child { border-radius: 12px 0 0 12px; margin-left: 0; }
+  .seg .chip:last-child { border-radius: 0 12px 12px 0; }
+  body.split { --pw: 36vw; display: grid; grid-template-columns: var(--pw) minmax(0, 1fr);
+               grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+  @media (max-width: 1599px) { body.split { --pw: 42vw; } }
+  body.split > header, body.split > footer { grid-column: 1 / -1; }
+  body.split > header { grid-row: 1; }
+  body.split > footer { grid-row: 5; }
+  body.split > #strip { display: none; }
+  body.split > #remotebar { grid-column: 2; grid-row: 2; }
+  body.split > #notices { grid-column: 2; grid-row: 3; }
+  body.split > :is(main, #settings, #qo, #ham, #aim, #logp, #helpv) { grid-column: 2; grid-row: 4; min-height: 0; }
+  body.split > #pictcol { display: flex; grid-column: 1; grid-row: 2 / 5; min-height: 0; }
+  #pictcol { flex-direction: column; gap: 8px; padding: 8px 0 8px 12px; overflow-y: auto; background: var(--bg); }
+  #pictcol > * { flex: none; }
+  /* Room in the header for the switch: the page's name says where you are. */
+  body.onescreen:is(.insettings, .inqo, .inaim, .inham, .inlog, .inhelp) #call { display: none; }
+  #piclabel { font-size: 17px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  #pictcol.preview #piclabel { color: var(--air); }
+  #picslot { position: relative; width: 100%; aspect-ratio: 16 / 9; flex: none; background: #000; border-radius: 6px;
+             display: flex; align-items: center; justify-content: center; }
+  #picempty { color: #8f9aa8; font-size: 20px; text-align: center; padding: 12px; }
+  #pictcol .rxstrip { border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px; min-height: 0; }
+  #pictcol .rxstrip.locked { border-color: var(--ok); }
+  #picacts .chip { min-height: 60px; padding: 0 16px; }
+  /* The page column is narrower than the screen the media queries see -
+     1229 px of a 1920 touchscreen - so its panels go one under another:
+     two side by side wrapped their frequencies onto two lines. */
+  body.split main, body.split #qo, body.split #ham { grid-template-columns: minmax(0, 1fr); }
+  /* Windows over the page column only, so the picture never covers them. */
+  body.split :is(.modal, #pad, #kbd, #setup, #ov) { left: var(--pw); }
+  body.split :is(.modalcard, #padcard, #kbdcard) { max-width: calc(100vw - var(--pw) - 24px); }
+  body.split #ovleft { width: min(1280px, calc(100vw - var(--pw) - 640px)); }
+  body.split #toast { left: calc(var(--pw) + (100vw - var(--pw)) / 2); }
+  /* Picture: the slot is the screen above the bar; the bar is the receive
+     status, Split, Console, Hide, and TRANSMIT. Urgent notices show above
+     the bar and keep it up. */
+  body.picmode { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto auto;
+                 background: #000; }
+  body.picmode > :not(#pictcol, #picbar, footer, #notices, #toast, .modal, #pad, #kbd, #setup, script) { display: none !important; }
+  body.picmode > #pictcol { display: block; grid-column: 1 / -1; grid-row: 1; padding: 0; background: #000; }
+  body.picmode #pictcol > :not(#picslot) { display: none; }
+  body.picmode #picslot { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
+  body.picmode > #notices { grid-column: 1 / -1; grid-row: 2; }
+  body.picmode #notices .notice:not(.urgent), body.picmode #noticemore { display: none !important; }
+  body.picmode > #picbar { display: flex; grid-column: 1; grid-row: 3; align-items: center; gap: 10px; padding: 8px 12px;
+                           background: var(--card); border-top: 2px solid var(--line); min-width: 0; }
+  body.picmode > footer { grid-column: 2; grid-row: 3; padding: 8px 12px; border-top: 2px solid var(--line); }
+  body.picmode #prev, body.picmode #pttnote { display: none; }
+  body.picmode #ptt { min-height: 76px; min-width: 420px; font-size: 34px; }
+  #picbar .rxstrip { flex: 1; min-width: 0; border: 0; padding: 0 8px; background: none; min-height: 0; }
+  #picbar .chip { min-height: 64px; padding: 0 18px; flex: none; }
+  #picbar.air { background: #fde4e2; border-top-color: var(--air); }
+  body.picmode.barhidden > #picbar, body.picmode.barhidden > footer { display: none; }
+  /* A modal's head: title, Close at the right on the same line (on a phone
+     too - it used to wrap under the title), then any choices below. */
+  .mhead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .mhead h2 { margin: 0; flex: 1 1 auto; min-width: 0; }
+  .mhead .mclose { order: 1; }
+  .mhead > .chips { order: 2; }
+  #sigspan { margin-left: auto; }
+  #sigsum { font-size: 24px; }
+  #sigsum b { font-weight: 800; }
+  .siglegend { display: flex; flex-wrap: wrap; gap: 4px 22px; }
+  .siglegend > span { white-space: nowrap; }
+  #updcheck { min-width: 190px; white-space: nowrap; flex: none; }
+  #qosafety .helpq { margin-left: 4px; }
+  .wnext { margin: 10px 0 0; font-size: 24px; }
+  #wtry .chip { min-height: 64px; padding: 0 18px; white-space: normal; text-align: left; }
+  @media (max-width: 640px) {
+    /* One header row: the callsign names the box on the main page, and
+       "Stand by" is what TRANSMIT already says - ON AIR still shows. */
+    #h1main, #state:not(.air) { display: none; }
+    .rxstrip { padding: 6px 10px; gap: 2px 10px; font-size: 17px; min-height: 44px; }
+    .rxstrip .swho { font-size: 18px; }
+    .rxstrip .smono { font-size: 16px; }
+    .rxstrip .sgo { font-size: 15px; }
+    #remotebar { padding: 6px 10px; font-size: 17px; }
+    /* One short line each on a phone: the explanation waits for "+N more". */
+    .notice { padding: 6px 10px; font-size: 17px; gap: 6px 10px; }
+    #notices:not(.all) .notice .dim { display: none; }
+    .notice > div { flex-basis: 100%; }
+    .notice .chip { min-height: 48px; font-size: 17px; padding: 0 10px; }
+    #toast { bottom: 110px; font-size: 18px; padding: 10px 16px; }
+    #prev { min-width: 96px; min-height: 72px; font-size: 18px; white-space: normal; line-height: 1.1; }
+    .note .chip { min-height: 40px; font-size: 16px; }
+    #sigsum { font-size: 18px; }
+    .why { font-size: 16px; }
+  }
+  /* Larix on a phone: the code large enough for a phone at arm's length to
+     read off the touchscreen, white round it (the quiet zone is in it). */
+  #larix { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-start; min-width: 0; }
+  #larixqr svg { display: block; width: 260px; height: 260px; border-radius: 6px; }
+  #larixqr:empty { display: none; }
+  #larixtext { flex: 1 1 260px; min-width: 0; display: grid; gap: 6px; font-size: var(--fs-s); }
+  #larixaddr { font: 600 17px ui-monospace, "DejaVu Sans Mono", monospace; overflow-wrap: anywhere; }
+  #larixtext .helpq { justify-self: start; margin-left: 0; }
+  body.density-compact #larixqr svg { width: 200px; height: 200px; }
+  /* The density switch, Compact's typed fields and menus. */
+  #densbtn { min-height: 44px; min-width: 0; padding: 0 10px; font-size: 18px; }
+  #kbdin { display: none; }
+  select.csel { display: none; }
+  .inlwrap { position: fixed; z-index: 11; display: flex; gap: 4px; }
+  .inlwrap input { flex: 1; min-width: 0; font: 700 18px ui-monospace, "DejaVu Sans Mono", monospace; padding: 0 8px;
+                   border: 2px solid var(--sel); border-radius: 6px; background: #fff; color: var(--ink); }
+  .inlwrap .chip { min-height: 0; min-width: 0; font-size: 13px; padding: 0 8px; }
+
+  /* Compact (density.js): the same page for a mouse and keyboard. The sizes
+     are openhamshack.css's variables set again; what follows are the places a
+     size was written into a rule of its own. Text stays 13 px or more. */
+  body.density-compact {
+    --fs: 15px; --fs-s: 13.5px; --fs-label: 13.5px; --ctl-h: 32px; --chip-fs: 14px; --chip-pad: 10px; --gap: 4px;
+    --label-w: 108px; --page-pad: 10px 14px; --sec-pad: 10px 14px; --sec-gap: 6px; --h2: 15px;
+    --big-fs: 19px; --big-h: 34px; --ptt-h: 48px; --ptt-fs: 22px; --nav-h: 34px; --nav-fs: 14px; --radius: 8px;
+  }
+  /* Read across a room (Aim) or done once (setup): touch size, always. */
+  body.density-compact :is(#aim, #setup) {
+    --fs: 24px; --fs-s: 21px; --fs-label: 20px; --ctl-h: 52px; --chip-fs: 21px; --chip-pad: 8px; --gap: 5px;
+    --label-w: 120px; --sec-pad: 14px 22px; --sec-gap: 7px; --h2: 26px; --big-fs: 38px; --big-h: 56px; --radius: 12px;
+    font-size: var(--fs);
+  }
+  body.density-compact h2 { text-transform: none; letter-spacing: 0; color: var(--ink); }
+  body.density-compact #toast { font-size: 15px; padding: 10px 16px; bottom: 80px; border-radius: 10px; }
+  body.density-compact header { padding: 4px 14px; gap: 6px 12px; }
+  body.density-compact header h1 { font-size: 18px; }
+  body.density-compact #call { font-size: 15px; padding: 3px 8px; border-radius: 6px; }
+  body.density-compact #state { font-size: 14px; padding: 4px 12px; }
+  body.density-compact #setback { min-height: 32px; min-width: 0; font-size: 14px; padding: 0 10px; }
+  body.density-compact .navlab { display: none; }
+  body.density-compact .navgrp { flex-direction: row; }
+  body.density-compact .navbtns { gap: 3px; }
+  body.density-compact #nav { gap: 10px; }
+  body.density-compact #nav .chip { padding: 0 9px; }
+  body.density-compact #pills { gap: 6px; }
+  body.density-compact :is(#recpill, #ytpill, #isspill, #papill) { font-size: 13px; padding: 3px 10px; }
+  body.density-compact #battpill { font-size: 12px; padding: 2px 6px; gap: 1px; min-width: 42px; border-radius: 6px; }
+  body.density-compact #battpill svg { width: 20px; height: 11px; }
+  body.density-compact #densbtn, body.density-compact #navtoggle { min-height: 30px; font-size: 13px; padding: 0 8px; }
+  body.density-compact .seg .chip { min-height: 32px; font-size: 13px; padding: 0 10px; }
+  body.density-compact .badge { width: 9px; height: 9px; margin-left: 5px; }
+  /* One header row down to about 1200 px, the page buttons as tabs. */
+  @media (min-width: 1200px) {
+    body.density-compact header { flex-wrap: nowrap; }
+    body.density-compact #nav { order: 0; flex-basis: auto; flex-wrap: nowrap; }
+  }
+  body.density-compact .rxstrip { font-size: 14px; min-height: 30px; padding: 3px 14px; gap: 2px 12px; }
+  body.density-compact .rxstrip .swho { font-size: 15px; }
+  body.density-compact .rxstrip .smono { font-size: 13px; }
+  body.density-compact .rxstrip .sdot { width: 9px; height: 9px; margin-right: -6px; }
+  body.density-compact .rxstrip .sgo { font-size: 13px; }
+  body.density-compact .notice, body.density-compact #remotebar { font-size: 14px; padding: 4px 14px; gap: 4px 12px; }
+  body.density-compact .notice .chip, body.density-compact #remotebar .chip { min-height: 28px; font-size: 13px; }
+  body.density-compact #txkeep { min-height: 36px; min-width: 0; font-size: 15px; }
+  body.density-compact #txtimeout b.left, body.density-compact #disppend b.left { font-size: 20px; }
+  body.density-compact #disppend .chip { min-height: 34px; min-width: 90px; font-size: 15px; }
+  body.density-compact .helpq { min-width: 22px; height: 22px; font-size: 14px; margin-left: 6px; border-width: 1px; }
+  body.density-compact .stepper .chip { min-width: 40px; font-size: 18px; }
+  body.density-compact .big small { font-size: 13px; }
+  body.density-compact footer { padding: 6px 14px 8px; }
+  body.density-compact #prev { min-width: 130px; font-size: 14px; border-radius: 10px; }
+  body.density-compact #ptt { border-radius: 10px; letter-spacing: 1px; }
+  body.density-compact #ptt:disabled { font-size: 15px; }
+  body.density-compact .note { font-size: 13px; margin-top: 3px; }
+  body.density-compact .note .chip { min-height: 26px; font-size: 13px; }
+  body.density-compact #setwrap { grid-template-columns: 190px minmax(0, 1fr); gap: 14px; }
+  body.density-compact #setcats .chip { min-height: 34px; font-size: 14px; padding: 0 12px; border-radius: 8px; }
+  body.density-compact #setgrid .field, body.density-compact #qo .field, body.density-compact #ham .field,
+    body.density-compact .sheet .field, body.density-compact #setup .field { grid-template-columns: var(--label-w) 1fr; }
+  body.density-compact .modalcard { padding: 14px 18px; gap: 10px; border-radius: 14px; }
+  body.density-compact .sumrow > b { font-size: 16px; }
+  body.density-compact #picsum { font-size: 14px; }
+  body.density-compact .sumrow .chip, body.density-compact #rxacts .chip, body.density-compact #picacts .chip { min-height: 32px; padding: 0 10px; }
+  body.density-compact #rxbox { padding: 8px 12px; }
+  body.density-compact #rxlabel { font-size: 18px; }
+  body.density-compact #rxdetail { font-size: 14px; min-height: 0; }
+  body.density-compact #rxadvice, body.density-compact #recinfo, body.density-compact .recwhere { font-size: 13.5px; }
+  body.density-compact .why, body.density-compact .srband { font-size: 12.5px; }
+  body.density-compact .warnbox { font-size: 13.5px; padding: 6px 10px; border-radius: 8px; }
+  body.density-compact #logsugline.on { font-size: 14px; padding: 6px 10px; }
+  body.density-compact #logsugline b { font-size: 15px; }
+  body.density-compact .rxcard { padding: 4px 10px; }
+  body.density-compact .rxn { font-size: 18px; min-width: 28px; height: 28px; }
+  body.density-compact .rxmain b { font-size: 15px; }
+  body.density-compact .rxmain small { font-size: 12.5px; }
+  body.density-compact #qorxlabel { font-size: 15px; }
+  body.density-compact #qorxdetail { font-size: 13px; }
+  body.density-compact #qochatlog { font-size: 14px; height: 260px; }
+  body.density-compact #qochatusers { height: 260px; }
+  body.density-compact #qosigs .chip { min-width: 0; }
+  body.density-compact #qotxch .chip { min-width: 70px; }
+  body.density-compact .robscale { font-size: 13px; }
+  body.density-compact .logrow { font-size: 14px; padding: 4px 10px; border-radius: 8px; grid-template-columns: 170px minmax(140px, 1.2fr) 1fr 1.3fr 90px; }
+  body.density-compact .logrow .lc { font-size: 16px; }
+  body.density-compact .logrow .lt, body.density-compact .logrow .lr { font-size: 13px; }
+  body.density-compact .logrow small { font-size: 12.5px; }
+  body.density-compact .logsug b { font-size: 16px; }
+  body.density-compact #loged .lv { min-height: 32px; font-size: 15px; }
+  body.density-compact #logedbar .chip { min-height: 36px; font-size: 15px; }
+  body.density-compact .strow b { font-size: 15px; }
+  body.density-compact .strow .stdet, body.density-compact .strow .stfix { font-size: 13.5px; }
+  body.density-compact .diagp { font-size: 14px; }
+  body.density-compact .netaddr { font-size: 15px; }
+  body.density-compact .nethead b, body.density-compact .dispout .nethead b { font-size: 15px; }
+  body.density-compact #hamcount { font-size: 26px; }
+  body.density-compact #hampasses { font-size: 14px; }
+  body.density-compact #pictcol .rxstrip { padding: 6px 10px; }
+  body.density-compact #picbar .chip { min-height: 32px; }
+  body.density-compact.picmode #ptt { min-height: 40px; min-width: 260px; font-size: 18px; }
+  /* Long rows are menus, short ones a joined segment. */
+  body.density-compact select.csel { display: inline-block; min-height: var(--ctl-h); min-width: 140px; max-width: 100%;
+    font: 600 14px system-ui, "DejaVu Sans", sans-serif; border: 2px solid var(--line); border-radius: 8px;
+    background: var(--card); color: var(--ink); padding: 0 6px; }
+  body.density-compact [data-compact="select"] > :is(button, .srband) { display: none; }
+  body.density-compact .chips[data-key]:not([data-compact]) { gap: 0; }
+  body.density-compact .chips[data-key]:not([data-compact]) > .chip { border-radius: 0; margin-left: -2px; }
+  body.density-compact .chips[data-key]:not([data-compact]) > .chip:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+  body.density-compact .chips[data-key]:not([data-compact]) > .chip:last-child { border-radius: 0 8px 8px 0; }
+  body.density-compact .chips[data-key]:not([data-compact]) > .chip:only-child { border-radius: 8px; }
+  /* Typing, not the on-screen keys. */
+  body.density-compact #kbdin { display: block; font: 600 17px system-ui, "DejaVu Sans", sans-serif; min-height: 38px;
+    padding: 0 10px; border: 2px solid var(--sel); border-radius: 8px; }
+  body.density-compact #kbdval, body.density-compact #kbdkeys .kbrow:not(:last-child) { display: none; }
+  body.density-compact #kbd { align-items: center; }
+  body.density-compact #kbdcard { width: min(720px, 96vw); padding: 14px 18px; }
+  body.density-compact #kbdtitle { font-size: 15px; }
+  body.density-compact .kbrow button { min-height: 34px; font-size: 14px; }
+  body.density-compact .kbrow button.space { display: none; }
+  body.density-compact .kbrow button.wide { flex: 0 0 120px; }
+  /* Explanations fold to one line; a click opens one. */
+  body.density-compact .expl:not(.open):not(:is(#setup, #aim) .expl) { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+    overflow: hidden; cursor: pointer; }
+  body.density-compact .warnbox .expl, body.density-compact #robtext { -webkit-line-clamp: unset; display: block; }
+  /* Three columns where there is room: Transmit, Receive and the Signal
+     column (the margin and how it has been). */
+  #sigcol { display: none; }
+  #sigcolnow .smargin { font: 800 28px ui-monospace, "DejaVu Sans Mono", monospace; }
+  #sigcolnow .smargin.good { color: var(--ok); }
+  #sigcolnow .smargin.marginal { color: var(--warn); }
+  #sigcolnow .smargin.bad { color: var(--air); }
+  #sigcolspark svg { display: block; width: 100%; height: 70px; background: #f6f8fb; border-radius: 6px; }
+  body.density-compact #sigcol { display: flex; }
+  @media (min-width: 1280px) { body.density-compact:not(.split) main { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 1600px) { body.density-compact.split main { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  body.density-compact.split { --pw: 30vw; }
+  @media (min-width: 1600px) { body.density-compact.split { --pw: 36vw; } }
+  body.density-compact #qo .big { font-size: 19px; min-height: 34px; }
+  @media (min-width: 1280px) {
+    body.density-compact #qo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  }

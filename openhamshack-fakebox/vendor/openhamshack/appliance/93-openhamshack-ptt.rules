@@ -1,0 +1,7 @@
+# PTT output (Settings > Transmission): dcttech-style HID relay boards
+# ("USBRelay1/2/4/8"), which the daemon switches with a feature report on
+# their hidraw node. 16c0:05df is V-USB's shared id, so the product name is
+# checked too: other hobby boards use the same pair and are none of ours.
+# CH340 serial relays need no rule: ttyUSB is root:dialout already, and the
+# openhamshack user is in dialout (openhamshack.service).
+KERNEL=="hidraw*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", ATTRS{product}=="USBRelay*", MODE="0660", GROUP="plugdev"

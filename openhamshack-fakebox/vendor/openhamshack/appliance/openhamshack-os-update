@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Debian security updates for a OpenHamShack, as root, from
+openhamshack-os-update.timer (hourly). Stdlib only, like the daemon.
+
+OpenHamShack updated itself, but the Debian underneath never did: a box installed
+in 2026 would still run that autumn's kernel, OpenSSL and ffmpeg years later.
+This runs unattended-upgrades limited to trixie-security and trixie-updates
+(52openhamshack-os-updates), at most once a day, and never while the box is on air
+or recording: the timer fires hourly and each run first asks the daemon, so a
+box that is busy at one hour is updated at a later one rather than a day late.
+
+It never restarts the box. What it installed is written to STATE, which the
+daemon reads: the console then says "Security updates installed - restart
+when convenient", and the diagnostics report lists the packages.
+
+Why nothing is held back - not ffmpeg, mpv, mesa or the Intel media driver,
+which transmit and receive depend on: ffmpeg's and mpv's demuxers and
+decoders parse whatever arrives over the air and off any USB stick, so they
+are this box's largest attack surface and the fixes it most needs. Debian's
+security and stable updates are minimal patches, or (ffmpeg) bug-fix releases
+of the same upstream branch - 7.1.x in trixie - with the same ABI; mesa and
+the media driver almost never come through them. A pinned "known good" set would be correct on the day it was
+made and unpatched from then on, with nobody here to maintain it. The guard
+against an update that does break something is that nothing changes under a
+running transmission (the busy check, and the old libraries stay loaded until
+the restart the operator chooses), and that the packages are named in the
+console and report, so a box that stops encoding after a restart says why.
+
+Bandwidth: downloads are limited (Acquire::http::Dl-Limit in the apt
+configuration), and the job runs at idle CPU and I/O priority.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
+
+STATE = Path(os.environ.get("OPENHAMSHACK_OS_STATE", "/var/lib/openhamshack/os-updates.json"))
+STATUS_URL = "http://127.0.0.1:8080/api/status"
+UPDATE_STATUS = Path("/run/openhamshack-update.json")
+DAILY = 20 * 3600       # a little under a day, so the hour it runs at may drift without skipping a day
+RETRY_FAILED = 3 * 3600  # no network, a mirror down: try again later the same day, not every hour
+UPDATE_BUSY = 15 * 60    # a OpenHamShack update newer than this and not finished is still running
+APT_ENV = {"DEBIAN_FRONTEND": "noninteractive", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+
+
+def daemon_status(url: str = STATUS_URL, timeout: float = 10, opener=urlopen) -> dict | None:
+    """The daemon's /api/status, or None when nothing is listening (stopped,
+    or not installed): then nothing is on air either. Any other failure - a
+    daemon that is up but does not answer - raises, and the run is skipped:
+    a hung daemon may well still have an encoder running."""
+    try:
+        with opener(url, timeout=timeout) as res:
+            return json.loads(res.read().decode())
+    except URLError as exc:
+        if isinstance(exc.reason, ConnectionRefusedError):
+            return None
+        raise
+
+
+def busy_reason(status: dict | None, update: dict | None = None, now: float | None = None) -> str:
+    """Why not to update now, or "". Transmitting, any receiver recording,
+    or a OpenHamShack update under way (both would run apt and dpkg tools)."""
+    now = time.time() if now is None else now
+    if status:
+        if status.get("onAir"):
+            return "transmitting"
+        recs = [status.get("rx") or {}] + list(status.get("receivers") or [])
+        if any(((r or {}).get("recording") or {}).get("file") for r in recs):
+            return "recording"
+    if update and update.get("phase") not in (None, "done", "failed") \
+            and now - float(update.get("at") or 0) < UPDATE_BUSY:
+        return "a OpenHamShack update is running"
+    return ""
+
+
+def due(state: dict, now: float) -> bool:
+    last = state.get("lastRun")
+    if not isinstance(last, (int, float)) or last > now:  # never, or a clock that went back
+        return True
+    return now - last >= (RETRY_FAILED if state.get("result") == "failed" else DAILY)
+
+
+def installed_versions(run=subprocess.run) -> dict[str, str]:
+    out = run(["dpkg-query", "-W", "-f", "${Package} ${Version} ${db:Status-Abbrev}\n"],
+              capture_output=True, text=True, check=True).stdout
+    vers = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2].startswith("i"):
+            vers[parts[0]] = parts[1]
+    return vers
+
+
+def changed(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """Packages upgraded or newly installed (a new kernel ABI is a new
+    package), as "name version"; removals are not news to an operator."""
+    return [f"{p} {v}" for p, v in sorted(after.items()) if before.get(p) != v]
+
+
+def read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(path: Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=1) + "\n")
+    os.chmod(tmp, 0o644)  # the daemon runs as openhamshack and only reads it
+    tmp.replace(path)
+
+
+# Every box should have these, whatever ISO it came from. Keep in step with
+# mkimage.sh's package list for anything an older image may lack.
+# firmware-realtek carries the rtw88 Wi-Fi and r8169 Ethernet firmware that
+# laptops like Ray's (RTL8822CE) need; it was always in the image, but
+# nothing would have put it back on a box that lost it.
+# iw is only for the diagnostic report's regulatory-domain line: without it
+# a tester's "no Wi-Fi" report cannot say which country rules the card runs.
+# avahi-daemon and avahi-utils publish the box for the phone and tablet
+# apps (_openhamshack._tcp, the daemon's Bonjour section) and answer for
+# openhamshack.local.
+BASELINE = ("unattended-upgrades", "firmware-sof-signed", "wireless-regdb", "firmware-realtek", "iw",
+            "avahi-daemon", "avahi-utils")
+
+
+def package_installed(name: str, run=subprocess.run) -> bool:
+    res = run(["dpkg-query", "-W", "-f=${Status}", name], capture_output=True, text=True)
+    return res.returncode == 0 and res.stdout.strip().endswith("installed") and "not-installed" not in res.stdout
+
+
+def apt(args: list[str], run=subprocess.run) -> subprocess.CompletedProcess:
+    return run(args, capture_output=True, text=True, env={**os.environ, **APT_ENV}, timeout=3 * 3600)
+
+
+def tail(text: str) -> str:
+    lines = [l for l in (text or "").strip().splitlines() if l.strip()]
+    return lines[-1][:200] if lines else ""
+
+
+def run_once(now: float | None = None, state_path: Path = STATE, status=daemon_status,
+             update_path: Path = UPDATE_STATUS, run=subprocess.run, which=shutil.which) -> str:
+    """One pass: decide, maybe update, record. Returns the result word."""
+    now = time.time() if now is None else now
+    state = read_json(state_path)
+    if not due(state, now):
+        return "not-due"
+
+    def busy() -> str:
+        try:
+            st = status()
+        except Exception as exc:
+            return f"OpenHamShack did not answer ({exc})"
+        return busy_reason(st, read_json(update_path), time.time())
+
+    why = busy()
+    if why:
+        state.update(lastCheck=now, skipped=why)
+        write_state(state_path, state)
+        print(f"skipped: {why}", flush=True)
+        return "skipped"
+
+    def finish(result: str, message: str = "", packages: list[str] | None = None) -> str:
+        state.update(lastCheck=now, lastRun=now, result=result, message=message, skipped="")
+        if packages:
+            state.update(updatedAt=time.time(), packages=packages)
+        write_state(state_path, state)
+        print(f"{result}: {message}" + (f" ({', '.join(packages)})" if packages else ""), flush=True)
+        return result
+
+    res = apt(["apt-get", "update", "-q"], run)
+    if res.returncode != 0:
+        return finish("failed", "could not read the Debian archive: " + (tail(res.stderr) or tail(res.stdout)))
+    # Packages a box imaged before they joined mkimage.sh's list is missing:
+    # updates replace OpenHamShack's own files, never Debian's, so without this a
+    # box keeps whatever its ISO had. Ray's laptop (a Tiger Lake Lenovo,
+    # installed from 0.8.1) had no firmware-sof-signed and so no sound at
+    # all, HDMI included. Installed here, at a quiet hour, so a OpenHamShack
+    # update never waits on apt or fails for want of a mirror.
+    missing = [p for p in BASELINE if not package_installed(p, run)]
+    added: list[str] = []
+    if missing:
+        res = apt(["apt-get", "install", "-y", "-q", "--no-install-recommends", *missing], run)
+        if res.returncode != 0:
+            return finish("failed", f"could not install {', '.join(missing)}: " + tail(res.stderr))
+        # The tool itself is not news to the operator; firmware is, and it
+        # only loads at the next start. avahi starts as it is installed, so
+        # it asks for no restart either.
+        added = [p for p in missing if p not in ("unattended-upgrades", "avahi-daemon", "avahi-utils")]
+    if not which("unattended-upgrade"):
+        return finish("failed", "unattended-upgrades is not installed", added)
+    why = busy()  # reading the archive took a while; keyed up since?
+    if why:
+        state.update(lastCheck=now, skipped=why)
+        write_state(state_path, state)
+        print(f"skipped: {why}", flush=True)
+        return "skipped"
+    before = installed_versions(run)
+    res = apt(["unattended-upgrade"], run)
+    after = installed_versions(run)
+    pkgs = changed(before, after)
+    if res.returncode != 0:
+        return finish("failed", tail(res.stderr) or tail(res.stdout) or f"unattended-upgrade exited {res.returncode}",
+                      pkgs)
+    pkgs = added + [p for p in pkgs if p not in added]
+    if pkgs:
+        return finish("updated", f"{len(pkgs)} package{'s' if len(pkgs) != 1 else ''} updated", pkgs)
+    return finish("current", "nothing to update")
+
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        print("needs root", file=sys.stderr)
+        sys.exit(1)
+    run_once()

@@ -1,0 +1,19 @@
+OpenHamShack is the userspace for an Intel N150 mini PC that replaces Portsdown and the Lynx player.
+
+What it does
+- Intel Quick Sync (VA-API, iHD driver) encodes H.264 or H.265.
+- ffmpeg packs a CBR MPEG-TS a few percent under the DVB net rate.
+- UDP port 8282 is the ingest used by F5OEO Pluto DATV firmware and by the LibreSDR DVBS2 firmware (DL1JM / PA2JSA). H.265 rides this port.
+- RTMP port 7272 is the H.264-only alternative. Settings are stuffed in the URL.
+- Optional MQTT to plutodvb/subvar on the Pluto (port 1883). LibreSDR leaves this off; set the frequency on the radio page.
+- MiniTiouner or PicoTuner (G4EML USB firmware) plugs in over USB. longmynd demodulates, patched with longmynd-picotuner.patch to open the PicoTuner too.
+- PicoTuner uses WinterHill ethernet firmware. Tune commands go to UDP 9920. The transport stream returns on UDP 9941.
+
+Write the disk
+- Boot a Debian or Ubuntu machine as root, with the network up.
+- ./mkimage.sh
+- Write openhamshack.img to the mini PC's disk or a USB stick with any image writer, and boot UEFI.
+- No password login: both accounts are locked and SSH takes only the key built in with SSH_KEYS.
+- Open port 8080 on the mini PC. The radio must already be running DVB firmware.
+
+The picture is not on the air until you press the button. Bare Pluto and LibreSDR output is about 0 dBm. Use a filter and a linear PA, on a frequency your licence allows.

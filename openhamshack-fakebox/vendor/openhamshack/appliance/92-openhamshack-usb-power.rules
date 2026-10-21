@@ -1,0 +1,4 @@
+# No USB autosuspend on a OpenHamShack. The touchscreen's hub (Terminus 1a40:0801)
+# was suspended when idle and failed to wake, dropping touch off the bus
+# twice in an evening; nothing on a mains-powered box gains from it.
+ACTION=="add", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"

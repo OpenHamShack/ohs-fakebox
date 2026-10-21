@@ -1,0 +1,34 @@
+[Unit]
+Description=OpenHamShack DATV console
+# Not after network-online: the screen waits for this service, and on a box
+# with no network (a laptop on first boot, before Wi-Fi is set up) systemd
+# waits two minutes for it, leaving the screen black. The daemon copes with
+# no network - it retries the radio, the tuner feed and update checks.
+After=network.target
+
+[Service]
+Type=simple
+User=openhamshack
+Group=openhamshack
+# dialout: a PicoTuner with G4EWJ's Ethernet firmware is a USB serial port
+# (ttyACM, root:dialout 0660) when plugged into the box, and setting it to
+# 1200 baud is how it is sent to BOOTSEL for a firmware update without
+# opening its case. The USB firmware needs nothing here (its udev rule).
+# systemd-journal: Settings > Diagnostics reads the kernel log and this
+# service's own log with journalctl, read-only, for the report a tester sends
+# us. The alternative was dmesg, which needs CAP_SYSLOG on Debian
+# (kernel.dmesg_restrict), so a sudo verb for what this group already grants.
+SupplementaryGroups=video render audio plugdev dialout systemd-journal
+Environment=OPENHAMSHACK_CONF=/etc/openhamshack/openhamshack.conf
+Environment=OPENHAMSHACK_PORT=8080
+ExecStart=/usr/bin/python3 /opt/openhamshack/openhamshack.py
+# After every stop - a crash, a kill or the OOM killer included, when the
+# daemon's own SIGTERM handler never ran - mute the radio and open the PA
+# relay (PTT output). Does nothing when the output is Off. "-": a failure
+# here must not mark the unit failed or hold up a restart.
+ExecStopPost=-/usr/bin/python3 /opt/openhamshack/openhamshack.py --safe-off
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

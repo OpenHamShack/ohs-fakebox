@@ -1,0 +1,71 @@
+#!/bin/bash
+# Mount and unmount USB drives for recording, as root.
+#   openhamshack-usb add <kernel-name>       (udev, on plug-in)
+#   openhamshack-usb remove <kernel-name>    (udev, on unplug)
+#   openhamshack-usb eject <mount-point>     (the daemon, via sudo; /media/openhamshack/* only)
+#
+# Drives land at /media/openhamshack/<label>, owned by the openhamshack user, so the
+# daemon can record to them without root. The Pluto's own USB drive (Analog
+# Devices, label PlutoSDR) and read-only installer media are left alone.
+set -euo pipefail
+BASE=/media/openhamshack
+action=${1:-}
+arg=${2:-}
+
+mount_point_for() {  # devname -> /media/openhamshack/<label or name>
+    local label
+    label=$(lsblk -n -o LABEL "/dev/$1" 2>/dev/null | head -1 | tr -c 'A-Za-z0-9._\n-' '_' | tr -d '\n')
+    echo "$BASE/${label:-$1}"
+}
+
+case "$action" in
+add)
+    dev=/dev/$arg
+    [[ -b "$dev" ]] || exit 0
+    fstype=$(lsblk -n -o FSTYPE "$dev" | head -1)
+    label=$(lsblk -n -o LABEL "$dev" | head -1)
+    vendor=$(udevadm info -q property -n "$dev" | sed -n 's/^ID_VENDOR_ID=//p')
+    [[ "$vendor" == "0456" || "$label" == "PlutoSDR" ]] && exit 0       # the radio's own drive
+    case "$label" in lbinstall|LBI-EFI|OPENHAMSHACK|OPENHAMSHACKEFI) exit 0 ;; esac  # OpenHamShack installer media
+    # Trying OpenHamShack from a stick: nothing on the stick it booted from, by
+    # disk rather than label - on a Ventoy stick that is Ventoy's own exFAT
+    # partition, with the ISO inside it mapped as the live medium.
+    if medium=$(findmnt -n -o SOURCE /run/live/medium 2>/dev/null); then
+        lsblk -n -s -r -o NAME,TYPE "$medium" 2>/dev/null | awk '$2 == "disk" {print $1}' \
+            | grep -qx -F "$(lsblk -n -d -o PKNAME "$dev" 2>/dev/null | head -1)" && exit 0
+    fi
+    case "$fstype" in vfat|exfat|ntfs|ext4|ext3|ext2) ;; *) exit 0 ;; esac  # not iso9660, squashfs...
+    findmnt -n "$dev" >/dev/null && exit 0
+    mp=$(mount_point_for "$arg")
+    mkdir -p "$mp"
+    uid=$(id -u openhamshack); gid=$(id -g openhamshack)
+    case "$fstype" in
+        vfat)  mount -o "uid=$uid,gid=$gid,umask=022,flush,noatime" "$dev" "$mp" ;;
+        exfat) mount -t exfat -o "uid=$uid,gid=$gid,umask=022,noatime" "$dev" "$mp" ;;
+        ntfs)  mount -t ntfs3 -o "uid=$uid,gid=$gid,umask=022,noatime" "$dev" "$mp" ;;
+        *)     mount -o noatime "$dev" "$mp" && install -d -o openhamshack -g openhamshack "$mp/OpenHamShack" ;;
+    esac
+    ;;
+remove)
+    for mp in $(findmnt -n -o TARGET -S "/dev/$arg" 2>/dev/null); do
+        umount -l "$mp" || true
+        rmdir "$mp" 2>/dev/null || true
+    done
+    # The device node is already gone on unplug; clear any mount left behind.
+    for mp in "$BASE"/*; do
+        [[ -d "$mp" ]] && ! mountpoint -q "$mp" && rmdir "$mp" 2>/dev/null || true
+    done
+    ;;
+eject)
+    mp=$(realpath -m "$arg")
+    [[ "$mp" == "$BASE"/* && "$(dirname "$mp")" == "$BASE" ]] || { echo "not a OpenHamShack USB mount" >&2; exit 2; }
+    mountpoint -q "$mp" || exit 0
+    sync
+    umount "$mp"
+    rmdir "$mp" 2>/dev/null || true
+    ;;
+*)
+    echo "usage: $0 add|remove <kernel-name> | eject <mount-point>" >&2
+    exit 2
+    ;;
+esac

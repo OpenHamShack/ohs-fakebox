@@ -1,0 +1,698 @@
+#!/usr/bin/env python3
+"""Wi-Fi and IPv4 settings for the console, as root. The daemon may run only
+this, through sudo, and only these verbs:
+
+    openhamshack-net scan <iface>                 nearby Wi-Fi networks (lifts a soft rfkill block first)
+    openhamshack-net wifi-list <iface>            saved networks and the link state
+    openhamshack-net wifi-add <iface>             JSON on stdin: ssid, psk, hidden
+    openhamshack-net wifi-forget <iface> <id>     id is the SSID in hex, as listed
+    openhamshack-net set-ipv4 <iface> dhcp|static static: JSON on stdin
+    openhamshack-net confirm                      keep a static change
+    openhamshack-net revert                       undo an unconfirmed static change
+
+Answers are one line of JSON on stdout; a refusal is {"error": ...} with
+status 2. A passphrase comes in on stdin, never on the command line where
+`ps` would show it, and goes into the config only as the PBKDF2 hash
+wpa_passphrase would write - it is never echoed back or logged.
+
+Files it writes, and why those names:
+  /etc/wpa_supplicant/wpa_supplicant-<iface>.conf - the file Debian's
+    wpa_supplicant@<iface>.service reads. A box built with NETWORK_DIR already
+    has one with the site's network in it; those blocks are kept byte for
+    byte, and a network added here goes in beside them.
+  /etc/systemd/network/16-openhamshack-<iface>.network - networkd uses the first
+    file, in lexical order, whose [Match] fits a link. 16 sorts after
+    15-usb-radio.network, so the radio's adapter can never be given an
+    address meant for the LAN (it is also refused below by driver), and
+    before the image's 20-wired.network, so a static address chosen here
+    beats the en*/eth* DHCP default. Matched by exact Name=, so it only ever
+    claims the one interface. A site file that sorts earlier and names the
+    interface would still win; set-ipv4 refuses rather than write a file
+    that would silently do nothing.
+
+A static address can cut off the browser that set it, and the box has no
+keyboard. So a static change is held pending: the previous file is kept in
+PENDING, and a transient systemd timer runs `revert` after REVERT_SECONDS
+unless `confirm` comes first. The daemon also runs `revert` when it starts,
+so a box rebooted inside the window comes back on the old settings rather
+than the untested ones. DHCP is the way back and is never held pending.
+
+OPENHAMSHACK_NET_ROOT points every path at a scratch tree and records commands
+instead of running them; the tests use it. sudo's env_reset (Debian's
+default) drops it, and it is refused outright if sudo passed it anyway.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(os.environ.get("OPENHAMSHACK_NET_ROOT") or "/")
+TESTING = ROOT != Path("/")
+WPA_DIR = ROOT / "etc/wpa_supplicant"
+NETWORK_DIR = ROOT / "etc/systemd/network"
+SYS_NET = ROOT / "sys/class/net"
+RFKILL = ROOT / "sys/class/rfkill"
+PENDING = ROOT / "var/lib/openhamshack-net/pending.json"
+PREFIX = "16-openhamshack-"
+REVERT_SECONDS = 60
+REVERT_UNIT = "openhamshack-net-revert"
+SELF = "/usr/local/sbin/openhamshack-net"
+CTRL_DIR = "/run/wpa_supplicant"
+# A Pluto or LibreSDR on USB (15-usb-radio.network): never a LAN interface.
+RADIO_DRIVERS = {"rndis_host", "cdc_ether", "cdc_ncm"}
+IFACE_RE = re.compile(r"^(en|eth|wl)[a-z0-9]+$")
+# Shown word for word by the console. A hard block cannot be lifted from
+# software, so the only useful answer is where the switch is.
+HARD_BLOCKED = ("Wi-Fi is switched off by the laptop (its wireless switch or Fn key, or the BIOS). "
+                "Turn it on there and scan again.")
+# Only the laptop's own switch driver says blocked; the card does not. Known
+# of ideapad_laptop on Lenovo IdeaPad-family machines, which can report a
+# hard block that is not there, so this is a note beside the scan rather
+# than a refusal that would lock out a card that works.
+PLATFORM_HARD = ("The laptop says its wireless switch is off ({names}), although the Wi-Fi card itself is not "
+                 "blocked. If no networks appear, check the switch or Fn key.")
+
+
+class Refused(Exception):
+    pass
+
+
+# --- Running things -------------------------------------------------------------
+def run(cmd: list[str], timeout: float = 20, check: bool = False) -> str:
+    """Run a command, or under OPENHAMSHACK_NET_ROOT record it and return the
+    canned output in ROOT/fake/<name> (the tests' wpa_cli answers). check:
+    a failure is a refusal, for the steps nothing may go ahead without."""
+    if TESTING:
+        with open(ROOT / "commands.log", "a") as f:
+            f.write(" ".join(cmd) + "\n")
+        if check and (ROOT / "fake" / f"fail_{Path(cmd[0]).name}").exists():
+            raise Refused(f"{Path(cmd[0]).name} failed")
+        fake = ROOT / "fake" / "_".join(Path(c).name for c in cmd[:1] + cmd[-1:])
+        return fake.read_text() if fake.exists() else ""
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if check and res.returncode != 0:
+        raise Refused(f"{Path(cmd[0]).name} failed: {res.stderr.strip()[:120]}")
+    return res.stdout
+
+
+def write_atomic(path: Path, text: str, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name("." + path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, mode)   # O_CREAT's mode is masked by the umask
+    os.replace(tmp, path)
+
+
+# --- Validation -----------------------------------------------------------------
+def check_iface(name: str, wifi: bool | None = None) -> str:
+    if not IFACE_RE.match(name or ""):
+        raise Refused("not a network interface name")
+    if not (SYS_NET / name).exists():
+        raise Refused(f"no interface {name}")
+    driver = (SYS_NET / name / "device" / "driver")
+    if driver.exists() and driver.resolve().name in RADIO_DRIVERS:
+        raise Refused(f"{name} is the USB radio's link, not a network")
+    is_wifi = (SYS_NET / name / "wireless").exists() or name.startswith("wl")
+    if wifi is True and not is_wifi:
+        raise Refused(f"{name} is not a Wi-Fi interface")
+    return name
+
+
+def check_ssid(ssid) -> bytes:
+    if not isinstance(ssid, str) or not ssid:
+        raise Refused("no network name")
+    raw = ssid.encode()
+    if len(raw) > 32:
+        raise Refused("a Wi-Fi network name is at most 32 bytes")
+    return raw
+
+
+def psk_line(ssid: bytes, psk) -> str | None:
+    """The psk= value: 64 hex digits, as wpa_passphrase computes them from a
+    passphrase. None for an open network."""
+    if psk in (None, ""):
+        return None
+    if not isinstance(psk, str):
+        raise Refused("passphrase must be text")
+    if len(psk) == 64 and re.fullmatch(r"[0-9a-fA-F]{64}", psk):
+        return psk.lower()
+    if not 8 <= len(psk) <= 63 or any(not 32 <= ord(c) <= 126 for c in psk):
+        raise Refused("a passphrase is 8 to 63 ordinary characters (or 64 hex digits)")
+    return hashlib.pbkdf2_hmac("sha1", psk.encode(), ssid, 4096, 32).hex()
+
+
+def static_settings(raw) -> dict:
+    if not isinstance(raw, dict):
+        raise Refused("static settings missing")
+    try:
+        iface = ipaddress.IPv4Interface(f"{raw.get('address')}/{int(raw.get('prefix'))}")
+    except (ValueError, TypeError):
+        raise Refused("address or prefix is not a valid IPv4 address") from None
+    net = iface.network
+    if net.prefixlen < 8 or net.prefixlen > 30:
+        raise Refused("prefix must be between 8 and 30")
+    if iface.ip in (net.network_address, net.broadcast_address) or iface.ip.is_loopback \
+            or iface.ip.is_multicast or iface.ip.is_unspecified:
+        raise Refused(f"{iface.ip} cannot be a host's address")
+    gw = None
+    if raw.get("gateway"):
+        try:
+            gw = ipaddress.IPv4Address(str(raw["gateway"]))
+        except ValueError:
+            raise Refused("gateway is not an IPv4 address") from None
+        if gw not in net or gw == iface.ip:
+            raise Refused(f"gateway {gw} is not on {net}")
+    dns = []
+    for d in (raw.get("dns") or [])[:3]:
+        try:
+            dns.append(str(ipaddress.IPv4Address(str(d))))
+        except ValueError:
+            raise Refused(f"DNS server {d} is not an IPv4 address") from None
+    return {"address": str(iface.ip), "prefix": net.prefixlen, "gateway": str(gw) if gw else "", "dns": dns}
+
+
+# --- wpa_supplicant config ----------------------------------------------------------
+def conf_path(iface: str) -> Path:
+    return WPA_DIR / f"wpa_supplicant-{iface}.conf"
+
+
+def split_conf(text: str) -> tuple[str, list[str]]:
+    """(globals, network blocks as their exact text). Blocks are kept as
+    written so a site's settings survive however they were spelt."""
+    head, blocks, i = [], [], 0
+    lines = text.splitlines(keepends=True)
+    while i < len(lines):
+        if re.match(r"\s*network\s*=\s*\{", lines[i]):
+            block = [lines[i]]
+            i += 1
+            while i < len(lines) and not re.match(r"\s*\}", lines[i]):
+                block.append(lines[i])
+                i += 1
+            if i < len(lines):
+                block.append(lines[i])
+                i += 1
+            blocks.append("".join(block))
+        else:
+            head.append(lines[i])
+            i += 1
+    return "".join(head), blocks
+
+
+def unescape(s: str) -> bytes:
+    """wpa_supplicant's printf_encode, undone: \\xNN, \\n, \\\\ and \\" (wpa_cli
+    prints SSIDs that way)."""
+    out, i = bytearray(), 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and i + 1 < len(s):
+            n = s[i + 1]
+            if n == "x" and re.fullmatch(r"[0-9a-fA-F]{2}", s[i + 2:i + 4]):
+                out.append(int(s[i + 2:i + 4], 16))
+                i += 4
+                continue
+            out += {"n": b"\n", "r": b"\r", "t": b"\t", "e": b"\x1b"}.get(n, n.encode())
+            i += 2
+            continue
+        out += c.encode()
+        i += 1
+    return bytes(out)
+
+
+def block_field(block: str, key: str) -> str | None:
+    m = re.search(rf"^\s*{key}\s*=\s*(.*?)\s*$", block, re.M)
+    return m.group(1) if m else None
+
+
+def block_ssid(block: str) -> bytes | None:
+    v = block_field(block, "ssid")
+    if v is None:
+        return None
+    if v.startswith('"') and v.endswith('"') and len(v) >= 2:
+        return v[1:-1].encode()
+    if v.startswith("P\"") and v.endswith('"'):
+        return unescape(v[2:-1])
+    try:
+        return bytes.fromhex(v)
+    except ValueError:
+        return None
+
+
+def ctrl_dir(head: str) -> str | None:
+    v = block_field(head, "ctrl_interface")
+    if not v:
+        return None
+    m = re.search(r"DIR=(\S+)", v)
+    return m.group(1) if m else v.split()[0]
+
+
+def network_block(ssid: bytes, psk: str | None, hidden: bool, priority: int) -> str:
+    # The SSID in hex: no quoting rules to get wrong, whatever bytes it holds.
+    lines = ["network={", f"\tssid={ssid.hex()}"]
+    if hidden:
+        lines.append("\tscan_ssid=1")
+    if psk:
+        lines.append(f"\tpsk={psk}")
+    else:
+        lines.append("\tkey_mgmt=NONE")
+    lines.append(f"\tpriority={priority}")
+    lines.append("\t# added by the OpenHamShack console")
+    return "\n".join(lines) + "\n}\n"
+
+
+def read_conf(iface: str) -> tuple[str, list[str]]:
+    p = conf_path(iface)
+    text = p.read_text() if p.exists() else ""
+    head, blocks = split_conf(text)
+    # The console reaches wpa_supplicant through its control socket (scan,
+    # reconfigure, state); a site config without one gets the standard one.
+    if ctrl_dir(head) is None:
+        head = f"ctrl_interface={CTRL_DIR}\n" + head
+    return head, blocks
+
+
+def join_conf(head: str, blocks: list[str]) -> str:
+    head = head.rstrip("\n") + "\n"
+    return head + "".join("\n" + b.strip("\n") + "\n" for b in blocks)
+
+
+def add_network(text_head: str, blocks: list[str], ssid: bytes, psk: str | None, hidden: bool) -> list[str]:
+    """Blocks with this SSID replaced by the new one, at a priority above
+    every other: the network just chosen is the one wanted now; the others
+    stay as fallbacks."""
+    keep = [b for b in blocks if block_ssid(b) != ssid]
+    prios = [int(block_field(b, "priority") or 0) for b in keep if (block_field(b, "priority") or "0").lstrip("-").isdigit()]
+    return keep + [network_block(ssid, psk, hidden, max(prios + [0]) + 1)]
+
+
+# --- systemd-networkd files -------------------------------------------------------
+def network_file(iface: str) -> Path:
+    return NETWORK_DIR / f"{PREFIX}{iface}.network"
+
+
+def match_names(text: str) -> list[str] | None:
+    """The Name= globs of a .network's [Match], None if it matches on
+    something else as well (a Driver=, say) that we cannot judge here."""
+    section, names, other = "", [], False
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            section = line
+        elif section == "[Match]" and "=" in line and not line.startswith(("#", ";")):
+            k, v = (x.strip() for x in line.split("=", 1))
+            if k == "Name":
+                names += v.split()
+            else:
+                other = True
+    return None if other else names
+
+
+def first_match(iface: str) -> Path | None:
+    import fnmatch
+    for f in sorted(NETWORK_DIR.glob("*.network")):
+        names = match_names(f.read_text(errors="replace"))
+        if names and any(fnmatch.fnmatchcase(iface, n.lstrip("!")) for n in names if not n.startswith("!")):
+            return f
+    return None
+
+
+def network_text(iface: str, mode: str, st: dict | None = None) -> str:
+    lines = ["# Written by the OpenHamShack console (Settings > Network). Remove this file",
+             "# to go back to the image's own settings.", "[Match]", f"Name={iface}", "", "[Network]"]
+    if mode == "dhcp":
+        lines.append("DHCP=yes")
+    else:
+        lines.append(f"Address={st['address']}/{st['prefix']}")
+        if st["gateway"]:
+            lines.append(f"Gateway={st['gateway']}")
+        lines += [f"DNS={d}" for d in st["dns"]]
+    return "\n".join(lines) + "\n"
+
+
+def network_reload(iface: str) -> None:
+    run(["networkctl", "reload"])
+    run(["networkctl", "reconfigure", iface])
+
+
+# --- Verbs ------------------------------------------------------------------------
+def wpa_cli(iface: str, *args: str, head: str | None = None) -> str:
+    d = ctrl_dir(head if head is not None else read_conf(iface)[0]) or CTRL_DIR
+    return run(["wpa_cli", "-p", d, "-i", iface, *args])
+
+
+def wpa_running(iface: str, head: str) -> bool:
+    if TESTING:
+        return (ROOT / "fake" / "running").exists()
+    return Path(ctrl_dir(head) or CTRL_DIR, iface).exists()
+
+
+def apply_wifi(iface: str, head: str, blocks: list[str], restart: bool = False) -> None:
+    write_atomic(conf_path(iface), join_conf(head, blocks), 0o600)
+    # A fresh box has no .network for its Wi-Fi at all: without one networkd
+    # leaves the link unconfigured even once it associates.
+    if first_match(iface) is None:
+        write_atomic(network_file(iface), network_text(iface, "dhcp"), 0o644)
+        network_reload(iface)
+    run(["systemctl", "enable", f"wpa_supplicant@{iface}.service"])
+    if restart or not wpa_running(iface, head):
+        run(["systemctl", "restart", f"wpa_supplicant@{iface}.service"])
+        # The scratch tree's stand-in for the service coming up, unless a
+        # test has said it will not.
+        if TESTING and not (ROOT / "fake" / "no_start").exists():
+            (ROOT / "fake" / "running").touch()
+    else:
+        wpa_cli(iface, "reconfigure", head=head)
+
+
+# --- rfkill -------------------------------------------------------------------------
+def rfkill_flag(dev: Path, name: str) -> bool:
+    try:
+        return (dev / name).read_text().strip() == "1"
+    except OSError:
+        return False
+
+
+def rfkill_name(dev: Path) -> str:
+    try:
+        return (dev / "name").read_text().strip()
+    except OSError:
+        return dev.name
+
+
+def wifi_rfkill(iface: str) -> tuple[list[Path], list[Path]]:
+    """(the card's own switches, the laptop's Wi-Fi switches). cfg80211
+    names the card's after its phy (phy0); a platform driver such as
+    ideapad_laptop or thinkpad_acpi adds one of type wlan under its own
+    name. Matched by phy, so a second card's block is never this one's."""
+    try:
+        phy = (SYS_NET / iface / "phy80211").resolve(strict=True).name
+    except OSError:
+        phy = None
+    own, platform = [], []
+    try:
+        devs = sorted(RFKILL.iterdir())
+    except OSError:
+        return own, platform
+    for dev in devs:
+        try:
+            kind = (dev / "type").read_text().strip()
+        except OSError:
+            continue
+        if kind != "wlan":
+            continue
+        name = rfkill_name(dev)
+        if re.fullmatch(r"phy\d+", name):
+            if name == phy:
+                own.append(dev)
+        else:
+            platform.append(dev)
+    return own, platform
+
+
+def rfkill_state(iface: str) -> dict:
+    own, platform = wifi_rfkill(iface)
+    return {"hard": any(rfkill_flag(d, "hard") for d in own),
+            "soft": any(rfkill_flag(d, "soft") for d in own + platform),
+            "platformHard": [rfkill_name(d) for d in platform if rfkill_flag(d, "hard")]}
+
+
+def rfkill_unblock(iface: str) -> list[str]:
+    """Lift soft blocks by writing the sysfs attribute, as `rfkill unblock`
+    does, so the image needs no new binary. The laptop's own Wi-Fi switch is
+    lifted with the card's: some platform drivers power the card down behind
+    a soft block of their own, and tapping Scan is the operator asking for
+    Wi-Fi on. Never another card's, and never Bluetooth."""
+    done = []
+    own, platform = wifi_rfkill(iface)
+    for dev in own + platform:
+        if rfkill_flag(dev, "soft"):
+            try:
+                (dev / "soft").write_text("0")
+            except OSError as exc:
+                raise Refused("Wi-Fi is switched off in software and could not be switched on: "
+                              f"{exc.strerror or exc}") from None
+            done.append(rfkill_name(dev))
+    return done
+
+
+def wpa_wait(iface: str, head: str) -> bool:
+    if not TESTING:
+        for _ in range(20):
+            if wpa_running(iface, head):
+                return True
+            time.sleep(0.25)
+    return wpa_running(iface, head)
+
+
+def verb_scan(iface: str) -> dict:
+    rf = rfkill_state(iface)
+    if rf["hard"]:
+        raise Refused(HARD_BLOCKED)
+    unblocked = rfkill_unblock(iface)
+    if unblocked and not TESTING:
+        time.sleep(1)        # the driver brings the radio up after the block lifts
+    head, blocks = read_conf(iface)
+    if not conf_path(iface).exists() or ctrl_dir(split_conf(conf_path(iface).read_text())[0]) is None \
+            or not wpa_running(iface, head):
+        # First scan on a fresh box, a site config without a control socket,
+        # or a service that has stopped: start wpa_supplicant with what is
+        # there, networks kept.
+        apply_wifi(iface, head, blocks, restart=True)
+    if not wpa_wait(iface, head):
+        # Asking a socket nobody listens on returns nothing, which the
+        # console would show as "no networks": the wrong thing to chase.
+        why = run(["journalctl", "-u", f"wpa_supplicant@{iface}.service", "-b", "-n", "1", "-o", "cat"]).strip()
+        raise Refused("The Wi-Fi service (wpa_supplicant) did not start, so OpenHamShack could not scan"
+                      + (f": {why[:160]}" if why else "."))
+    said = wpa_cli(iface, "scan", head=head).strip()
+    # FAIL-BUSY is a scan already under way (wpa_supplicant's own), whose
+    # results serve as well as ours. A plain FAIL is the interface refusing.
+    if said.startswith("FAIL") and said != "FAIL-BUSY":
+        raise Refused(f"Wi-Fi would not scan (wpa_supplicant answered {said[:40]})")
+    if not TESTING:
+        time.sleep(4)
+    nets = parse_scan(wpa_cli(iface, "scan_results", head=head))
+    # empty: a scan that worked and heard nothing, which the console words
+    # as "No networks found"; anything that went wrong is an error instead.
+    out = {"networks": nets, "empty": not nets}
+    if unblocked:
+        out["unblocked"] = unblocked
+    if rf["platformHard"]:
+        out["note"] = PLATFORM_HARD.format(names=", ".join(rf["platformHard"]))
+    return out
+
+
+def security(flags: str) -> str:
+    if "SAE" in flags and "PSK" not in flags:
+        return "wpa3"      # SAE only: needs the passphrase itself, not a hash
+    if "WPA" in flags or "RSN" in flags:
+        return "wpa2" if "PSK" in flags else "enterprise"
+    if "WEP" in flags:
+        return "wep"
+    return "open"
+
+
+def parse_scan(text: str) -> list[dict]:
+    """wpa_cli scan_results: bssid, frequency, signal, flags, ssid, tab
+    separated. One row per name, the strongest access point's."""
+    best: dict[bytes, dict] = {}
+    for line in text.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5 or not re.match(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$", parts[0]):
+            continue
+        ssid = unescape(parts[4])
+        if not ssid or ssid.strip(b"\0") == b"":
+            continue
+        try:
+            sig = int(parts[2])
+        except ValueError:
+            continue
+        cur = best.get(ssid)
+        if cur is None or sig > cur["signal"]:
+            best[ssid] = {"id": ssid.hex(), "ssid": ssid.decode(errors="replace"), "signal": sig,
+                          "band": "5 GHz" if int(parts[1] or 0) > 4000 else "2.4 GHz", "security": security(parts[3])}
+    return sorted(best.values(), key=lambda n: -n["signal"])
+
+
+def verb_wifi_list(iface: str) -> dict:
+    head, blocks = read_conf(iface)
+    flags = {}
+    for line in wpa_cli(iface, "list_networks", head=head).splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) >= 4:
+            flags[unescape(parts[1])] = parts[3]
+    saved = []
+    for b in blocks:
+        ssid = block_ssid(b)
+        if ssid is None:
+            continue
+        f = flags.get(ssid, "")
+        saved.append({"id": ssid.hex(), "ssid": ssid.decode(errors="replace"),
+                      "priority": int(block_field(b, "priority") or 0) if (block_field(b, "priority") or "0").lstrip("-").isdigit() else 0,
+                      "hidden": block_field(b, "scan_ssid") == "1",
+                      "open": (block_field(b, "key_mgmt") or "") == "NONE",
+                      "current": "CURRENT" in f, "disabled": "DISABLED" in f})
+    state = {}
+    for line in wpa_cli(iface, "status", head=head).splitlines():
+        k, _, v = line.partition("=")
+        if k in ("wpa_state", "ssid", "ip_address", "freq"):
+            state[k] = unescape(v).decode(errors="replace") if k == "ssid" else v
+    # Whether the service runs, and the switches: without them an interface
+    # nobody has scanned on yet reads exactly like one switched off.
+    return {"saved": saved, "state": state, "running": wpa_running(iface, head), "rfkill": rfkill_state(iface)}
+
+
+def verb_wifi_add(iface: str, raw: dict) -> dict:
+    ssid = check_ssid(raw.get("ssid"))
+    psk = psk_line(ssid, raw.get("psk"))
+    head, blocks = read_conf(iface)
+    apply_wifi(iface, head, add_network(head, blocks, ssid, psk, bool(raw.get("hidden"))))
+    # Ask for the new network now rather than at the next scan.
+    wpa_cli(iface, "reassociate", head=head)
+    return {"ok": True, "id": ssid.hex()}
+
+
+def verb_wifi_forget(iface: str, net_id: str) -> dict:
+    if not re.fullmatch(r"(?:[0-9a-f]{2}){1,32}", net_id or ""):
+        raise Refused("not a saved network")
+    head, blocks = read_conf(iface)
+    keep = [b for b in blocks if block_ssid(b) != bytes.fromhex(net_id)]
+    if len(keep) == len(blocks):
+        raise Refused("not a saved network")
+    apply_wifi(iface, head, keep)
+    return {"ok": True}
+
+
+def read_pending() -> dict | None:
+    try:
+        return json.loads(PENDING.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def stop_timer() -> None:
+    # Stopping a transient timer unloads it; without that (RemainAfterElapse
+    # keeps an elapsed one loaded) the next systemd-run of the same name is
+    # refused as "unit already exists".
+    run(["systemctl", "stop", f"{REVERT_UNIT}.timer"])
+    run(["systemctl", "reset-failed", f"{REVERT_UNIT}.service", f"{REVERT_UNIT}.timer"])
+
+
+def verb_set_ipv4(iface: str, mode: str, raw: dict) -> dict:
+    if mode not in ("dhcp", "static"):
+        raise Refused("mode is dhcp or static")
+    st = static_settings(raw) if mode == "static" else None
+    target = network_file(iface)
+    first = first_match(iface)
+    if first is not None and first.name < target.name:
+        raise Refused(f"{first.name} sets up {iface} and takes precedence; it must be removed on the box first")
+    pend = read_pending()
+    if mode == "dhcp":
+        # The way back: never held pending, and it ends a pending change to
+        # the same interface.
+        if pend and pend["iface"] == iface:
+            stop_timer()
+            PENDING.unlink(missing_ok=True)
+        write_atomic(target, network_text(iface, "dhcp"), 0o644)
+        network_reload(iface)
+        return {"ok": True}
+    if pend and pend["iface"] != iface:
+        raise Refused(f"keep or undo the change to {pend['iface']} first")
+    fresh = not pend
+    if fresh:
+        pend = {"iface": iface, "file": str(target),
+                "previous": target.read_text() if target.exists() else None}
+    pend.update(address=st["address"], deadline=time.time() + REVERT_SECONDS)
+    write_atomic(PENDING, json.dumps(pend) + "\n", 0o644)
+    stop_timer()
+    # No timer, no change: a static address with nothing to undo it is
+    # exactly how a box with no keyboard gets stranded.
+    try:
+        run(["systemd-run", f"--unit={REVERT_UNIT}", f"--on-active={REVERT_SECONDS}", "--timer-property=AccuracySec=1s",
+             "--collect", SELF, "revert"], check=True)
+    except Refused:
+        if fresh:
+            PENDING.unlink(missing_ok=True)   # nothing was changed; nothing to undo
+        raise
+    write_atomic(target, network_text(iface, "static", st), 0o644)
+    network_reload(iface)
+    return {"ok": True, "pending": pend | {"previous": None}, "revertSeconds": REVERT_SECONDS}
+
+
+def verb_confirm() -> dict:
+    stop_timer()
+    PENDING.unlink(missing_ok=True)
+    return {"ok": True}
+
+
+def verb_revert() -> dict:
+    pend = read_pending()
+    if not pend:
+        return {"ok": True, "reverted": False}
+    target = Path(pend["file"])
+    # Only ever our own file: the pending record is root's, but check anyway.
+    if target.parent != NETWORK_DIR or not target.name.startswith(PREFIX):
+        PENDING.unlink(missing_ok=True)
+        raise Refused("pending change names a file that is not the console's")
+    if pend.get("previous") is None:
+        target.unlink(missing_ok=True)
+    else:
+        write_atomic(target, pend["previous"], 0o644)
+    PENDING.unlink(missing_ok=True)
+    stop_timer()
+    network_reload(pend["iface"])
+    return {"ok": True, "reverted": True}
+
+
+def stdin_json() -> dict:
+    try:
+        raw = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        raise Refused("bad JSON on stdin") from None
+    if not isinstance(raw, dict):
+        raise Refused("bad JSON on stdin")
+    return raw
+
+
+def main(argv: list[str]) -> int:
+    if TESTING and os.environ.get("SUDO_USER"):
+        print(json.dumps({"error": "OPENHAMSHACK_NET_ROOT is for tests, not sudo"}))
+        return 2
+    verb, args = (argv[0] if argv else ""), argv[1:]
+    try:
+        if verb == "scan" and len(args) == 1:
+            out = verb_scan(check_iface(args[0], wifi=True))
+        elif verb == "wifi-list" and len(args) == 1:
+            out = verb_wifi_list(check_iface(args[0], wifi=True))
+        elif verb == "wifi-add" and len(args) == 1:
+            out = verb_wifi_add(check_iface(args[0], wifi=True), stdin_json())
+        elif verb == "wifi-forget" and len(args) == 2:
+            out = verb_wifi_forget(check_iface(args[0], wifi=True), args[1])
+        elif verb == "set-ipv4" and len(args) == 2:
+            out = verb_set_ipv4(check_iface(args[0]), args[1], stdin_json() if args[1] == "static" else {})
+        elif verb == "confirm" and not args:
+            out = verb_confirm()
+        elif verb == "revert" and not args:
+            out = verb_revert()
+        else:
+            raise Refused("usage: openhamshack-net scan|wifi-list|wifi-add|wifi-forget|set-ipv4|confirm|revert ...")
+    except Refused as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 2
+    print(json.dumps(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

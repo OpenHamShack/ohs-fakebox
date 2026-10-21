@@ -1,0 +1,7 @@
+# Ajazz AKP03E controller: the openhamshack user drives it without root.
+KERNEL=="hidraw*", ATTRS{idVendor}=="0300", ATTRS{idProduct}=="3002", MODE="0660", GROUP="plugdev"
+# A USB keypad or keyboard the operator chose in Settings > Controller (and
+# only that: openhamshack-keypad checks the chosen list). libinput is told to
+# leave it alone, so its keys never type into the console as well; the
+# daemon grabs it besides. Takes effect when it is next plugged in.
+SUBSYSTEM=="input", KERNEL=="event*", ACTION!="remove", PROGRAM="/usr/local/sbin/openhamshack-keypad %k", MODE="0660", GROUP="plugdev", ENV{LIBINPUT_IGNORE_DEVICE}="1"

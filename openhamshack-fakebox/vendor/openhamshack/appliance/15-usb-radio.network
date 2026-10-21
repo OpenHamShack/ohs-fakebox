@@ -1,0 +1,17 @@
+# A Pluto or LibreSDR on USB is a CDC/RNDIS network adapter with its own DHCP
+# server (Pluto: 192.168.2.1, handing out .10). Take the address so the box
+# can reach the radio, but never its gateway or DNS: as the default route it
+# would cut the box off from the LAN and the tailnet the moment it is plugged in.
+[Match]
+Driver=rndis_host cdc_ether cdc_ncm
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=no
+
+[DHCPv4]
+UseGateway=no
+UseRoutes=no
+UseDNS=no
+UseNTP=no
+UseDomains=no

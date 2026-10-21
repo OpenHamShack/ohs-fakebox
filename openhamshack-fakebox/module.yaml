@@ -1,0 +1,183 @@
+apiVersion: dock360/v1
+
+id: openhamshack-fakebox
+name: OpenHamShack Fakebox
+version: 0.1.0
+summary: A pretend OpenHamShack box for testing OpenHamShack Remote on real devices - the real box API, with the radio faked.
+description: >
+  Runs the real OpenHamShack (Classic) box daemon's HTTP API - status,
+  tuning, the PIN sign-in, the remote PTT lease, the receive stream at /api/rx/stream.ts and
+  the QO-100 feed - with everything that would touch a radio or a tuner
+  replaced. It is openhamshack-remote's tools/fakebox.py, vendored unmodified
+  together with the Classic appliance code it imports (vendor/PINNED names
+  both commits).
+
+  Nothing here can transmit. Keying is answered by the fakebox itself, the
+  "radio" is at a TEST-NET address, and no device is passed into the
+  container. The receive stream is ffmpeg looping a clip from this app's
+  data folder (or a test card), re-encoded as a DATV station would send it,
+  with optional packet loss, periodic cuts, or no signal at all, so a
+  player's ride-through and reconnect can be watched without a tuner.
+
+  Devices reach it on the LAN port labelled "Devices" below, where the box's
+  PIN rules apply exactly as they do at a real box seen from elsewhere on the
+  network. The box's own-screen view, which is always authorised, is never
+  published. The host firewall decides which devices get in.
+
+  Changing a setting restarts the fakebox, which ends every PIN session, so
+  apps under test need the PIN again afterwards - the same as at a real box.
+category: radio
+icon: 📦
+author: Dock360
+license: MIT
+
+runtime:
+  build:
+    context: .
+    containerfile: Containerfile
+  user: "1000:1000"
+  read_only_rootfs: true
+  no_new_privileges: true
+  cap_drop:
+    - ALL
+  # The daemon's state - its config, sessions and the files it would keep on
+  # a box - lives in a fresh folder under /tmp each start, as it did under
+  # systemd. Starting clean is the point: a test fakebox that remembered
+  # yesterday's sessions would hide exactly the bugs it exists to show.
+  tmpfs:
+    - /tmp
+  # Nothing to flush; every stream is an ffmpeg child that dies with the
+  # container.
+  stop_timeout: 10
+
+web:
+  enabled: true
+  container_port: 8080
+  subdomain: fakebox
+  strip_prefix: true
+  websockets: false
+
+# The device-facing box API: fakebox's 18081, where a browser elsewhere is
+# a browser elsewhere and the PIN applies. `expose: lan` binds every host
+# interface, so the host firewall (ufw on shack) is what admits devices.
+#
+# Declared from the first version on purpose: Dock360 allocates extra ports
+# only at install, and one added by a later update deploys cleanly with
+# nothing listening.
+#
+# The box-screen port (18080, always authorised) is deliberately absent. It
+# is bound to the container's loopback by app.main as well, so publishing it
+# by mistake here would still reach nothing.
+#
+# SRT camera ingest (udp 19710) is not published either. The daemon's
+# listener runs inside, but the box advertises its own port and addresses to
+# the phone (larix links), which inside a container are the container's -
+# so a published UDP port would be a different number from the one the app
+# is told, and shack's ufw drops inbound UDP in any case. See README.
+ports:
+  - container: 18081
+    protocol: tcp
+    expose: lan
+    label: Devices (box API, PIN applies)
+
+health:
+  type: http
+  path: /healthz
+  interval: 30
+  timeout: 5
+  retries: 3
+  start_period: 20
+
+resources:
+  # Each viewer is an ffmpeg decoding the clip and re-encoding it at 720p25;
+  # HEVC ultrafast is about one core and 150 MB per viewer, and fakebox
+  # stops at eight viewers. Four cores covers the usual two or three devices
+  # with room; more viewers than that get a stuttering picture, not a host
+  # in trouble.
+  memory_max: 2G
+  memory_high: 1536M
+  cpu_quota: 400%
+  # runtime.user means UserNS=keep-id, and podman's ID-mapped layer copy on
+  # first start is bounded by this and sized by the host's core count; 128
+  # was enough on a 16-core host and failed on a 48-core one. Also comfortably
+  # above eight ffmpeg children and their threads.
+  pids_max: 512
+
+volumes:
+  - name: data
+    container_path: /data
+    description: >
+      clips/ holds the films the receive stream can loop. Add one from this
+      app's page, or copy it into
+      /var/lib/dock360/modules/openhamshack-fakebox/data/clips/ on the host
+      (owned by dock360). Nothing else is kept.
+    backup: false
+
+env:
+  - key: BOX_CLIP
+    label: Clip
+    type: string
+    default: bbb_trailer_1080p.mov
+    help: >
+      The file name of a clip in the clips folder (listed on this app's page,
+      where more can be uploaded), looped as the received picture. Empty or
+      "testcard" sends ffmpeg's test card with a 1 kHz beep instead. A name
+      that is not there falls back to the test card, and the page says so.
+
+  - key: BOX_CODEC
+    label: Video codec
+    type: select
+    options: [h264, hevc]
+    default: hevc
+    help: >
+      How the stream is encoded. Real DATV stations send both; HEVC is the
+      one that catches out a player or a hardware decoder.
+
+  - key: BOX_AUDIO
+    label: Audio codec
+    type: select
+    options: [mp2, aac]
+    default: mp2
+    help: MP2 is what most DATV stations send; AAC is the other one in use.
+
+  - key: BOX_LOSS_PERCENT
+    label: Packet loss (%)
+    type: string
+    default: "2"
+    help: >
+      The share of 188-byte transport packets dropped, as a marginal signal
+      drops them - a percentage, so 2 means one in fifty and 0.5 is allowed.
+      0 is a clean stream. Anything not between 0 and 100 is treated as 0 and
+      reported on the page.
+
+  - key: BOX_CUT_SECONDS
+    label: Cut the stream every (seconds)
+    type: int
+    default: 0
+    help: >
+      Closes each viewer's connection this many seconds after it opened, as a
+      dropped Wi-Fi link does, to exercise a player's reconnect. 0 never cuts.
+
+  - key: BOX_NO_SIGNAL
+    label: No signal
+    type: bool
+    default: false
+    help: >
+      The receiver reports unlocked and the stream stays open sending ten
+      null packets a second, which is what a real box sends with nothing to
+      receive.
+
+  - key: BOX_PIN
+    label: Remote PIN
+    type: string
+    default: "1234"
+    help: >
+      The PIN a device must give before it may tune or key. 1 to 32 letters
+      or digits; anything else falls back to 1234 and the page says so. Not
+      marked secret because it is a test fixture every tester is told, and
+      seeing it on the settings page is the useful thing.
+
+backup:
+  strategy: hot
+
+min_dock360: "0.12.0"

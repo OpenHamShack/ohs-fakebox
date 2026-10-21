@@ -1,0 +1,11 @@
+[Unit]
+Description=Grow the root filesystem to fill the disk
+After=local-fs.target
+Before=openhamshack.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openhamshack-growroot
+
+[Install]
+WantedBy=multi-user.target

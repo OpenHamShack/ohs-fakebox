@@ -1,0 +1,1165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenHamShack</title>
+<link rel="stylesheet" href="openhamshack.css" />
+<script>
+  // A console whose stylesheet or scripts did not arrive is a dead page: with
+  // no script there is no poll, so nothing would ever reload it. A page loaded
+  // across a daemon restart can lose some of them; and the first update to a
+  // release with separate files does it on purpose: the old daemon, still
+  // running while the helper installs the new files, already serves the new
+  // page but not the files beside it, and a console that saw the update
+  // start reloads as soon as the new VERSION is on disk. So try again until
+  // they come. Inline, because it has to work when the files do not.
+  addEventListener("error", (e) => {
+    const t = e.target;
+    if (t && (t.tagName === "SCRIPT" || t.tagName === "LINK")) setTimeout(() => location.reload(), 3000);
+  }, true);
+</script>
+</head>
+<body>
+<!-- The header: Back (the only one, always first and in the same place),
+     the page's name, the callsign, the page buttons in three groups, and
+     the states that must be seen from any page. The page buttons are the
+     most-used controls on the box, so they are full finger size and grouped
+     by what they are for; on a phone they fold into one "Pages" button. -->
+<header>
+  <button class="chip" id="setback">‹ Back</button>
+  <h1><span id="h1main">OpenHamShack</span><span id="h1set">Settings</span><span id="h1qo">QO-100</span><span id="h1aim">Aiming</span><span id="h1ham">HamTV</span><span id="h1log">Log</span><span id="h1help">Help</span></h1>
+  <span id="call" class="tap" title="Tap to change callsign">—</span>
+  <!-- One screen and no TV: where the received picture goes (screen.js).
+       Only on the box's own screen, and only when there is a choice. -->
+  <div id="modesw" class="seg" role="group" aria-label="Received picture">
+    <button class="chip" data-mode="console">Console</button><button class="chip" data-mode="split">Split</button><button class="chip" data-mode="picture">Picture</button></div>
+  <button class="chip ro" id="navtoggle" aria-expanded="false" aria-controls="nav">☰ Pages</button>
+  <nav id="nav" aria-label="Pages">
+    <div class="navgrp" role="group" aria-label="On air"><span class="navlab">On air</span><span class="navbtns">
+      <button class="chip" id="sigbtn">Signal</button>
+      <button class="chip" id="aimbtn">Aim</button>
+      <button class="chip" id="logbtn">Log<span id="logbadge"></span></button></span></div>
+    <div class="navgrp" role="group" aria-label="Satellites"><span class="navlab">Satellites</span><span class="navbtns">
+      <button class="chip" id="qobtn">QO-100</button>
+      <button class="chip" id="hambtn">HamTV</button></span></div>
+    <div class="navgrp" role="group" aria-label="Station"><span class="navlab">Station</span><span class="navbtns">
+      <button class="chip" id="ytbtn">YouTube</button>
+      <button class="chip" id="setbtn">Settings<span class="badge" id="setbadge"></span></button>
+      <button class="chip" id="helpbtn">Help</button></span></div>
+  </nav>
+  <span id="pills">
+    <span id="ytpill">● LIVE on YouTube</span>
+    <button id="isspill" title="HamTV: an ISS pass"></button>
+    <button id="recpill" class="ro" title="Recording: open the signal log"></button>
+    <button class="chip ro" id="densbtn">Aa</button>
+    <!-- A laptop's battery (battery.js): only where there is one. -->
+    <span id="battpill" role="img"></span>
+    <span id="state">Stand by</span>
+    <span id="papill"></span>
+  </span>
+</header>
+
+<!-- What is being received, on every page: the one thing an operator wants
+     to know wherever they are (it used to be only in the main page's Receive
+     panel, below the fold on QO-100 just after tapping a signal). Tapping it
+     opens Signal. Any element with class rxstrip is painted the same way
+     (strip.js), so another layout can place a second one. -->
+<button id="strip" class="rxstrip ro" aria-label="Received signal: open the signal log"></button>
+<div id="remotebar"><b>View only.</b><span id="remotemsg"></span>
+  <button class="chip ro" id="remotelogin">Enter PIN</button></div>
+<!-- Notices: one line in the same place on every page, highest priority
+     first (notices.js). The ones that count down or are about safety -
+     the PA relay, the time-out, an address or display change waiting for
+     Keep - always show; of the rest only the first does, with "+N more".
+     A fresh box used to stack four of them above the panels. -->
+<div id="notices">
+<div id="pttstuck" class="notice urgent"><b>PA relay did not switch off.</b> <span id="pttstuckwhy"></span>
+  OpenHamShack keeps trying every second and will not transmit until it has. Switch the PA off by hand, or set
+  PTT output to Off in Settings › Transmission once it is safe.</div>
+<div id="txtimeout" class="notice urgent"><span>Transmit time-out: the transmitter switches off in <b class="left" id="txleft"></b> s.
+  <span class="err" id="txkeeperr"></span></span><button class="chip" id="txkeep">Keep transmitting</button></div>
+<div id="netpend" class="notice urgent"></div>
+<div id="disppend" class="notice urgent"></div>
+<div id="battcrit" class="notice urgent"></div>
+<div id="txerrbar" class="notice" data-rank="1"><div><b id="txerrhead">Transmitter:</b> <span id="txerr"></span></div>
+  <button class="chip ro" data-help="if-it-does-not-work">What to do</button><button class="chip ro" id="txerrok">Dismiss</button></div>
+<div id="battlow" class="notice" data-rank="2"><div><b id="battlowmsg"></b> <span class="dim" id="battlowwhy"></span></div>
+  <button class="chip ro" id="battlowok">Dismiss</button></div>
+<div id="livebanner" class="notice" data-rank="3"><div><b>Trying OpenHamShack from the USB stick — nothing is saved to this PC.</b>
+  <span class="dim">Settings, the logbook and recordings go at shutdown; record to another USB drive to keep them.</span></div>
+  <button class="chip" id="liveinstall">Install…</button></div>
+<div id="netbanner" class="notice" data-rank="4"></div>
+<div id="clockbanner" class="notice" data-rank="5"><div><b id="clockmsg"></b> <span class="dim" id="clockwhy"></span></div>
+  <button class="chip ro" id="clockok">Dismiss</button></div>
+<div id="autobanner" class="notice" data-rank="6"><div><b id="automsg"></b> <span class="dim" id="autowhy"></span></div>
+  <button class="chip ro" id="autook">OK</button></div>
+<div id="osbanner" class="notice" data-rank="7"><div><b>Security updates installed — restart when convenient.</b>
+  <span class="dim">They take full effect at the next start. Nothing changes while you are on air.</span></div>
+  <button class="chip" id="osboot" data-power="reboot">Restart</button>
+  <button class="chip ro" id="osok">OK</button></div>
+<button class="chip ro" id="noticemore" hidden></button>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<!-- The main page answers "what is happening?" first and "how is it set?"
+     second (docs/ui-review.md, "Proposed restructure"): what an operator
+     changes while operating - frequency, power, what the picture is - is
+     here; the set-and-forget parts are a tap away in the Transmit mode and
+     Picture windows, and the receiver is tuned from Tune…. The Transmit
+     panel had 11 rows and 40+ chips, with the picture source below the
+     fold at 1920. -->
+<main>
+  <section id="txsec">
+    <h2>Transmit <button class="helpq" data-help="modulator" aria-label="Help: the modulator">?</button></h2>
+    <div class="field"><span>Frequency</span>
+      <div class="big tap" id="frequencyMHz" data-pad="Transmit frequency (MHz)"></div></div>
+    <div class="field"><span></span><div class="chips" data-key="frequencyMHz" data-num="1">
+      <button class="chip" data-v="146.5">146.50</button>
+      <button class="chip" data-v="437">437.00</button>
+      <button class="chip" data-v="1255">1255.00</button>
+      <button class="chip" data-page="qo">QO-100…</button>
+    </div></div>
+    <div class="field"><span>Mode</span><div class="sumrow"><b id="txmodesum">—</b>
+      <button class="chip ro" id="txmodeopen">Change…</button></div></div>
+    <div class="field"><span>Power</span><div class="stepper">
+      <button class="chip" data-step="-1">−</button><div class="big" id="gainDb"></div><button class="chip" data-step="1">+</button></div></div>
+    <div class="field"><span>Picture</span><div class="sumrow"><b id="picsum">—</b>
+      <button class="chip ro" id="picopen">Change…</button></div></div>
+    <div class="field"><span>Overlay</span><div class="chips">
+      <div class="chips" data-key="callsignOverlay" data-bool="1">
+        <button class="chip" data-v="true">On</button><button class="chip" data-v="false">Off</button></div>
+      <button class="chip" id="ovopen">Overlay…</button></div></div>
+    <!-- What the settings above add up to. The header used to carry the
+         channel rate alone ("6533 kb/s channel"), the most prominent number
+         on the page and the least explained. -->
+    <div class="field"><span></span><div class="expl" id="txplan"></div></div>
+  </section>
+
+  <section id="rxsec">
+    <h2>Receive <button class="helpq" data-help="receive" aria-label="Help: receive and the tuner">?</button></h2>
+    <div id="rxcards"></div>
+    <div id="rxbox"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div id="rxlabel">—</div><button class="chip" id="rec">● Record</button></div><div id="rxdetail"></div>
+      <div id="rxadvice"></div>
+      <div id="recinfo"></div>
+      <!-- Where recordings go: words, with the other drives as plain chips
+           to choose. It was a blue chip, which read as a setting switched on
+           in the middle of the receive status. -->
+      <div class="chips" id="recto"></div>
+      <div id="hint" style="display:none;align-items:center;gap:12px;margin-top:6px;font-size:21px">
+        <span id="hinttext"></span><button class="chip" id="usehint" style="min-height:48px">Use</button></div></div>
+    <div class="field" id="rx1row"><span>Tuned to</span><div class="sumrow"><b id="rxsum">—</b>
+      <button class="chip ro" id="rxtune1">Tune…</button></div></div>
+    <div class="chips" id="rxacts"><button class="chip ro" id="rxsig">Signal</button><button class="chip ro" id="rxaim">Aim</button>
+      <button class="chip ro" data-page="qo">QO-100 page</button></div>
+    <!-- A contact waiting to be logged, said where it is noticed: the
+         Log button's number was easy to miss. -->
+    <div id="logsugline"></div>
+  </section>
+  <!-- Compact only (density.js): the margin and the last ten minutes beside
+       Transmit and Receive, where a laptop has the room. -->
+  <section id="sigcol">
+    <h2>Signal</h2>
+    <div id="sigcolnow"></div>
+    <div id="sigcolspark"></div>
+    <div class="dim" id="sigcolsum"></div>
+    <div class="chips"><button class="chip ro" id="sigcolopen">Open Signal</button><button class="chip ro" id="sigcolaim">Aim</button></div>
+  </section>
+</main>
+
+<!-- Transmit mode: symbol rate, mode, modulation and error correction,
+     with how robust the result is. Every tap applies at once, as on the
+     page it came from, so it closes with Done rather than Save. -->
+<div id="txm" class="modal sheet"><div class="modalcard">
+  <div class="mhead"><h2>Transmit mode <button class="helpq" data-help="modulator" aria-label="Help: the modulator">?</button></h2>
+    <button class="chip ro mclose" id="txmclose">Done</button></div>
+    <div class="field"><span title="Thousands of symbols a second (kS): the signal's width. Lower is narrower and more robust">Symbol rate</span><div class="chips" data-key="symbolRateKs" data-num="1" data-compact="select">
+      <button class="chip" data-v="125">125</button><button class="chip" data-v="250">250</button>
+      <button class="chip" data-v="333">333</button><button class="chip" data-v="500">500</button>
+      <button class="chip" data-v="1000">1000</button><button class="chip" data-v="1500">1500</button>
+      <button class="chip" data-v="2000">2000</button><button class="chip" data-v="3000">3000</button>
+      <button class="chip" data-v="4000">4000</button></div></div>
+    <div class="field"><span></span><div class="expl">kS: thousand symbols a second, the signal's width. Lower is narrower and
+      more robust; higher carries more picture.</div></div>
+    <div class="field"><span>Mode</span><div class="chips" data-key="mode">
+      <button class="chip" data-v="dvbs2">DVB-S2</button><button class="chip" data-v="dvbs">DVB-S</button></div></div>
+    <div class="field"><span title="How many bits each symbol carries: QPSK 2, 8PSK 3, 16APSK 4, 32APSK 5. Fewer is more robust">Modulation</span><div class="chips" data-key="constellation" id="constellation">
+      <button class="chip" data-v="qpsk">QPSK</button><button class="chip" data-v="8psk">8PSK</button>
+      <button class="chip" data-v="16apsk">16APSK</button><button class="chip" data-v="32apsk">32APSK</button></div></div>
+    <!-- Only the code rates the chosen modulation has (status.fecChoices). -->
+    <div class="field"><span title="Forward error correction: lower is more robust, higher carries more picture">FEC</span><div class="chips" data-key="fec" id="fec" data-compact="select"></div></div>
+    <div class="field"><span></span><div class="expl">Error correction: a lower number is more robust, a higher one
+      carries more picture.</div></div>
+  <div id="robust"><div class="robscale"><span>more robust</span><div class="robbar"><i id="robdot"></i></div><span>more picture</span></div>
+    <div class="expl" id="robtext"></div></div>
+  <div class="field" id="txmhintrow" hidden><span></span><div class="sumrow"><span id="txmhint"></span>
+    <button class="chip" id="txmusehint">Use what this link supports</button></div></div>
+</div></div>
+
+<!-- Picture: what is sent, its source's own rows, and its size. -->
+<div id="picm" class="modal sheet"><div class="modalcard">
+  <div class="mhead"><h2>Picture</h2><button class="chip ro mclose" id="picmclose">Done</button></div>
+    <div class="field"><span>Source</span><div class="chips" data-key="source">
+      <button class="chip" data-v="testcard">Test card</button><button class="chip" data-v="webcam">Camera / ATEM</button><button class="chip" data-v="file">Video file</button><button class="chip" data-v="stream">Stream (OBS)</button></div></div>
+    <!-- Camera source: what can be captured now and the sound beside it.
+         The daemon scans (status.camera, only while this source is chosen);
+         this only paints, and repaints only when the list changes. -->
+    <div class="field" id="camrow" style="display:none"><span>Camera</span><div class="chips"><div class="chips" id="camchips"></div><button class="helpq" data-help="cameras-and-sound" aria-label="Help: cameras and sound">?</button></div></div>
+    <div class="field" id="camprobrow" style="display:none"><span></span><div class="err" id="camprob"></div></div>
+    <div class="field" id="camsndrow" style="display:none"><span>Sound</span><div class="chips" id="camsnd"></div></div>
+    <div class="field" id="camsndprobrow" style="display:none"><span></span><div class="dim" id="camsndprob"></div></div>
+    <!-- Test card source: the built-in cards, then the station's own
+         pictures (status.testcard); pictures are added and deleted in the
+         Pictures window. -->
+    <div class="field" id="tcrow" style="display:none"><span>Card</span><div class="chips">
+      <div class="chips" id="tcchips"></div>
+      <button class="chip" id="tcopen">Own pictures…</button>
+      <button class="helpq" data-help="test-cards" aria-label="Help: test cards">?</button></div></div>
+    <div class="field" id="tcprobrow" style="display:none"><span></span><div class="err" id="tcprob"></div></div>
+    <div class="field" id="tcsndrow" style="display:none"><span>Sound</span><div class="chips" data-key="testcardAudio">
+      <button class="chip" data-v="tone">Tone 1 kHz</button><button class="chip" data-v="silence">Silence</button>
+      <button class="chip" data-v="morse">Morse ID</button></div></div>
+    <div class="field" id="mediarow" style="display:none"><span>Video</span><div class="chips">
+      <button class="chip" id="mediaopen">Choose a video…</button>
+      <button class="helpq" data-help="video-files" aria-label="Help: video files">?</button>
+      <div class="chips" data-key="videoLoop" data-bool="1">
+        <button class="chip" data-v="true">Loop</button><button class="chip" data-v="false">Play once</button></div></div></div>
+    <div class="field" id="mediaprobrow" style="display:none"><span></span><div class="err" id="mediaprob"></div></div>
+    <!-- Stream source: the box listens while it is selected, so OBS can
+         connect before key-up. The addresses come from the daemon, which
+         knows the box's LAN and tailnet addresses; the passphrase is set
+         here and never shown again. -->
+    <div class="field" id="streamrow" style="display:none"><span>Stream</span><div class="chips">
+      <div class="chips" data-key="streamProtocol">
+        <button class="chip" data-v="srt">SRT</button><button class="chip" data-v="rtmp">RTMP</button><button class="chip" data-v="udp">UDP</button></div>
+      <button class="chip" id="streamport"></button>
+      <button class="chip" id="streamsecret"></button>
+      <button class="helpq" data-help="streaming-from-obs" aria-label="Help: streaming from OBS">?</button></div></div>
+    <div class="field" id="streamlatrow" style="display:none"><span>Latency</span><div class="chips" data-key="streamLatencyMs" data-num="1">
+      <button class="chip" data-v="120">120 ms</button><button class="chip" data-v="200">200 ms</button>
+      <button class="chip" data-v="500">500 ms</button><button class="chip" data-v="1000">1 s</button></div></div>
+    <div class="field" id="streaminforow" style="display:none"><span></span><div id="streaminfo">
+      <div id="streamstate"></div><div id="streamnote" class="dim"></div><div id="streamobs"></div></div></div>
+    <!-- A phone as the camera: Larix Broadcaster sets itself up from a QR
+         code (a "Larix Grove" link from the daemon, /api/stream/larix). The
+         passphrase is in it only on the box's own screen or with the PIN. -->
+    <div class="field" id="larixrow" style="display:none"><span>Phone</span><div id="larix">
+      <div id="larixqr"></div>
+      <div id="larixtext"><div><b>Phone:</b> install Larix Broadcaster, then scan this with the phone's camera: it opens Larix with a
+        connection to this box set up.</div>
+        <div class="chips" id="larixvia"></div>
+        <div class="dim" id="larixnote"></div>
+        <code id="larixaddr"></code>
+        <button class="helpq" data-help="streaming-from-a-phone" aria-label="Help: streaming from a phone">?</button></div></div></div>
+    <div class="field"><span>Size</span><div class="chips" id="sizes" data-compact="select">
+      <button class="chip" data-size="auto">Auto</button>
+      <button class="chip" data-size="640x360">640×360</button><button class="chip" data-size="768x432">768×432</button>
+      <button class="chip" data-size="1024x576">1024×576</button><button class="chip" data-size="1280x720">1280×720</button>
+      <button class="chip" data-size="1920x1080">1920×1080</button><button class="chip" data-size="3840x2160">3840×2160</button></div></div>
+    <div class="field"><span>Frame rate</span><div class="chips" id="rates" data-compact="select">
+      <button class="chip" data-fps="15">15</button><button class="chip" data-fps="25">25</button><button class="chip" data-fps="30">30</button>
+      <span class="why" id="rateswhy">Set by Auto size</span></div></div>
+</div></div>
+
+<!-- Settings by category: a menu down the left, one category at a time on
+     the right. Sections say which category they belong to (data-cat); the
+     menu is built from SETCATS in the script, so a section moves category by
+     changing its attribute alone. -->
+<div id="settings"><div id="setwrap"><nav id="setcats" aria-label="Settings categories"></nav><div id="setgrid">
+  <section class="ctl" data-cat="station">
+    <h2>Radio</h2>
+    <div class="field"><span>Radio</span><div class="chips"><div class="chips" data-key="radio">
+      <button class="chip" data-v="pluto">Pluto</button><button class="chip" data-v="libresdr">LibreSDR</button></div>
+      <span class="dim" style="align-self:center;margin-left:14px">at</span>
+      <button class="chip tap" id="host" data-pad="Radio address" data-kind="ip"></button></div></div>
+    <div class="expl"><b>Pluto:</b> F5OEO's DATV firmware (PlutoDVB2 is set over its MQTT). <b>LibreSDR:</b> DL1JM's DATV
+      firmware. OpenHamShack sets its frequency, mode, symbol rate, FEC and power on the radio's own page before each
+      transmission, keys it with PTT and checks it went on air, and always sends PTT off at the end. A LibreSDR that does not
+      answer as that firmware is not keyed. Its on-air or standby state is in Diagnostics.</div>
+  </section>
+  <section class="ctl" data-cat="screens">
+    <!-- One choice per situation: with a TV the picture is on the TV; with
+         one screen, Split, Picture or Console (the header has the same
+         switch). They were Auto / TV + touchscreen / Video only, with three
+         lines to explain them. -->
+    <h2>Screens <button class="helpq" data-help="screens" aria-label="Help: screens">?</button></h2>
+    <div class="field"><span>With a TV</span><div class="chips" data-key="screenLayout">
+      <button class="chip" data-v="auto">Picture on the TV</button><button class="chip" data-v="two">The same, hidden when the TV is off</button></div></div>
+    <div class="field"><span>One screen</span><div class="chips" data-key="oneScreen">
+      <button class="chip" data-v="split">Split</button><button class="chip" data-v="picture">Picture</button>
+      <button class="chip" data-v="console">Console</button></div></div>
+    <div class="expl"><b>Split:</b> the picture in a column beside the console; nothing covers anything.
+      <b>Picture:</b> the picture fills the screen, over a bar with Split, Console and TRANSMIT that hides after a while
+      (a tap on the picture brings it back). <b>Console:</b> no picture.</div>
+    <!-- Per browser (or, on the box's own screen, the box's setting), and
+         so needing no PIN: it changes nothing but how this page is drawn. -->
+    <div class="field"><span>This browser</span><div class="chips" id="densrow">
+      <button class="chip ro" data-density="auto">Auto</button><button class="chip ro" data-density="touch">Touch</button>
+      <button class="chip ro" data-density="compact">Compact</button></div></div>
+    <div class="expl"><b>Touch:</b> large controls, for a touchscreen at arm's length. <b>Compact:</b> smaller, for a
+      mouse and keyboard, with more on the page. <b>Auto:</b> Compact for a mouse and keyboard elsewhere, Touch on the
+      box's own screen. <b>Aa</b> in the header switches too.</div>
+    <div class="field"><span>Preview</span><div class="chips" data-key="txPreview" data-bool="1">
+      <button class="chip" data-v="true">Show what goes out while on air</button><button class="chip" data-v="false">Off</button></div></div>
+  </section>
+  <section class="ctl" data-cat="screens" id="dispsec">
+    <!-- Resolution, refresh, scale, rotation and Off per screen. Nothing
+         here is kept until Keep is tapped on the bar at the top: a mode a
+         screen cannot show would otherwise leave a black touchscreen and no
+         way to tap anything. The daemon undoes it, not this page. -->
+    <h2>Display <button class="helpq" data-help="display" aria-label="Help: display">?</button></h2>
+    <div id="displist" class="dim">Reading…</div>
+    <div class="chips" id="dispacts"></div>
+    <div class="err" id="dispmsg"></div>
+    <div class="expl">Every change is tried for <b>15 seconds</b> and then undone, unless <b>Keep</b> is tapped
+      on the bar at the top - from here or from any browser signed in with the PIN.</div>
+  </section>
+  <section class="ctl" data-cat="station">
+    <h2>Licence <button class="helpq" data-help="licence-regions" aria-label="Help: licence regions">?</button></h2>
+    <div class="field"><span>Region</span><div class="chips" id="licence">
+      <button class="chip" data-lic="scotland">Scotland</button><button class="chip" data-lic="uk">Rest of UK</button>
+      <button class="chip" data-lic="nonov">No 146 NoV</button>
+      <button class="chip" data-lic="iaru1">IARU Region 1</button><button class="chip" data-lic="other">Other: no band check</button></div></div>
+    <div class="expl" id="lictop"></div>
+    <div class="warnbox" id="licother" hidden></div>
+    <div class="expl"><b>IARU Region 1</b> is Europe, Africa and the Middle East.</div>
+  </section>
+  <section class="ctl" data-cat="transmission">
+    <h2>Transmission (advanced)</h2>
+    <div class="field"><span title="How steeply the signal's edges fall away; smaller fits the same rate in less bandwidth">Roll-off</span><div class="chips" data-key="rolloff" data-compact="select">
+      <button class="chip" data-v="0.35">0.35</button><button class="chip" data-v="0.25">0.25</button><button class="chip" data-v="0.20">0.20</button></div></div>
+    <div class="expl">How steeply the signal's edges fall away. A smaller roll-off fits the same symbol rate into less
+      bandwidth; receivers find any of the three. Leave it as it is unless the station you work asks otherwise.</div>
+    <div class="field"><span>Key frames</span><div class="chips" data-key="keyframeSeconds" data-num="1">
+      <button class="chip" data-v="1">1 s</button><button class="chip" data-v="2">2 s</button><button class="chip" data-v="4">4 s</button></div></div>
+    <div class="field"><span>Denoise</span><div class="chips" data-key="denoise" data-num="1">
+      <button class="chip" data-v="0">Off</button><button class="chip" data-v="12">Camera</button><button class="chip" data-v="32">Strong</button></div></div>
+    <!-- H.265 carries the same picture in fewer bits; H.264 is for graphics
+         that cannot encode H.265 (the self-test says) and older receivers. -->
+    <div class="field"><span>Codec</span><div class="chips" data-key="codec">
+      <button class="chip" data-v="hevc">H.265</button><button class="chip" data-v="h264">H.264</button></div></div>
+    <div class="field"><span>Time-out</span><div class="chips" data-key="txTimeoutMin" data-num="1" data-compact="select">
+      <button class="chip" data-v="0">Off</button><button class="chip" data-v="10">10 min</button><button class="chip" data-v="20">20 min</button>
+      <button class="chip" data-v="30">30 min</button><button class="chip" data-v="60">60 min</button><button class="chip" data-v="120">120 min</button></div></div>
+    <div class="expl">After this long on air the transmitter switches off by itself. A minute before, a bar at the top
+      counts down with <b>Keep transmitting</b>, which starts the time again.</div>
+    <!-- The QO-100 busy check's fallback (the daemon's "busy check's
+         fallback" section): used only when BATC's spectrum cannot be seen,
+         never instead of it. Off by default. -->
+    <div class="field"><span>Busy check without BATC</span><div class="chips" data-key="qo100PlutoSpectrum" data-bool="1">
+      <button class="chip" data-v="false">Off</button><button class="chip" data-v="true">Pluto's own receiver</button>
+      <button class="helpq" data-help="busy-check-without-batc" aria-label="Help: the busy check without BATC">?</button></div></div>
+    <div class="expl">When BATC's QO-100 spectrum cannot be reached, look at the band through the Pluto's own receiver
+      rather than only offering <b>Transmit anyway</b>. Needs the LNB fed to the Pluto's RX port as well (a splitter
+      with a DC block) and PlutoDVB2 with its spectrum; it changes the Pluto's receive settings, never while on air.
+      Not yet tried on real hardware. <span id="plutofftstate"></span></div>
+    <!-- PTT output: keys a PA and coax relay after the radio, in order -
+         relay, PA delay, RF; RF off, tail, relay (the daemon's PTT output
+         section). The relay chips are what is plugged in now
+         (status.pttOutput.relays); a chosen relay that is not plugged in
+         keeps its chip, greyed, so the choice is not lost by unplugging. -->
+    <div class="field"><span>PTT output</span><div class="chips" data-key="pttOutput">
+      <button class="chip" data-v="off">Off</button><button class="chip" data-v="plutoGpo">Pluto GPO</button>
+      <button class="chip" data-v="usbRelay">USB relay</button></div></div>
+    <div class="field pttrelay"><span>Relay</span><div class="chips" id="pttrelays"></div></div>
+    <div class="field pttrelay"><span>Channel</span><div class="chips" id="pttchans" data-key="pttRelayChannel" data-num="1"></div></div>
+    <div class="field pttrelay" id="pttbaudrow"><span>Baud</span><div class="chips" data-key="pttRelayBaud" data-num="1">
+      <button class="chip" data-v="9600">9600</button><button class="chip" data-v="115200">115200</button></div></div>
+    <div class="field pttseq"><span>PA delay</span><div class="chips" data-key="pttPaDelayMs" data-num="1" data-compact="select">
+      <button class="chip" data-v="0">0</button><button class="chip" data-v="50">50 ms</button><button class="chip" data-v="100">100 ms</button>
+      <button class="chip" data-v="200">200 ms</button><button class="chip" data-v="500">500 ms</button><button class="chip" data-v="1000">1 s</button></div></div>
+    <div class="field pttseq"><span>Tail</span><div class="chips" data-key="pttTailMs" data-num="1" data-compact="select">
+      <button class="chip" data-v="0">0</button><button class="chip" data-v="100">100 ms</button><button class="chip" data-v="200">200 ms</button>
+      <button class="chip" data-v="500">500 ms</button><button class="chip" data-v="1000">1 s</button></div></div>
+    <div class="field pttrelay"><span>Test</span><div class="chips">
+      <button class="chip" id="ptttest">Test relay</button>
+      <span class="dim" id="ptttestnote" style="align-self:center">clicks the relay for 1 s without transmitting</span></div></div>
+    <div class="err" id="pttmsg"></div>
+    <div class="expl" id="pttexpl"></div>
+  </section>
+  <section class="ctl" data-cat="station" id="stationsec">
+    <h2>Station</h2>
+    <div class="field"><span>Callsign</span><div class="chips">
+      <button class="chip" id="setcall" style="min-width:200px"></button></div></div>
+    <div class="field"><span>Locator</span><div class="chips">
+      <button class="chip" id="setloc" style="min-width:200px"></button>
+      <span class="dim" style="align-self:center">where the overlay's weather is for</span></div></div>
+    <div class="err" id="stationerr"></div>
+    <!-- The choice is the connection, not the make: a MiniTiouner and a PicoTuner
+         with its USB firmware are both run by longmynd and both report lock and
+         MER; a PicoTuner with the Ethernet firmware is tuned over the network and
+         reports nothing. The USB chip names whichever tuner is plugged in. -->
+    <div class="field"><span>Tuner</span><div class="chips" data-key="rxTuner">
+      <button class="chip" data-v="minitiouner" id="usbchip">USB tuner</button><button class="chip" data-v="picotuner">PicoTuner network</button><button class="chip" data-v="pluto">Tuner on the Pluto</button>
+      <button class="helpq" data-help="tuner-on-the-pluto" aria-label="Help: a tuner on the Pluto">?</button></div></div>
+    <div class="field" id="picorow"><span>PicoTuner</span><div class="chips">
+      <button class="chip tap" id="picoHost" data-pad="PicoTuner address" data-kind="ip"></button></div></div>
+    <!-- A tuner on the Pluto's own USB, run by PlutoDVB2's longmynd. The
+         hardware it needs is said here, where it is chosen, because nothing
+         else on the box can tell a missing hub from a missing tuner. -->
+    <div class="field" id="plutorxrow"><span>On the Pluto</span><div class="chips">
+      <button class="chip" id="plutocall" hidden>Set the Pluto's callsign</button>
+      <span class="dim" id="plutorxnote" style="align-self:center"></span></div></div>
+    <div class="expl" id="plutorxexpl">The MiniTiouner or PicoTuner goes on a <b>powered USB hub on the Pluto's USB port</b>,
+      and the Pluto on <b>Ethernet</b> (a USB Ethernet adapter in the same hub) at the radio's address: with the hub
+      there, its USB link to this box is gone. The Pluto (PlutoDVB2) runs longmynd and sends the picture here. It
+      starts with <b>18 V on the LNB</b> until this box sets the LNB supply a second later: check what is on the F
+      connector first. Not yet tried on real hardware.</div>
+    <div class="err" id="plutocallmsg"></div>
+    <div class="field"><span>Setup</span><div class="chips">
+      <button class="chip" id="setupagain">Set up…</button>
+      <span class="dim" style="align-self:center">callsign, radio, tuner and licence, then a check of this PC</span></div></div>
+    <div class="field"><span>Self-test</span><div class="chips">
+      <button class="chip" id="strun">Run self-test</button>
+      <button class="helpq" data-help="self-test" aria-label="Help: the self-test">?</button>
+      <span class="dim" id="stwhen" style="align-self:center"></span></div></div>
+    <div class="err" id="stmsg"></div>
+    <div class="stlist" id="stlist"></div>
+  </section>
+  <section data-cat="network" id="netstreamsec">
+    <h2>Stream to a PC <button class="helpq" data-help="stream-to-a-pc" aria-label="Help: stream to a PC">?</button></h2>
+    <div class="field"><span>Send</span><div class="chips" data-key="netStreamOn" data-bool="1">
+      <button class="chip" data-v="true">On</button><button class="chip" data-v="false">Off</button></div></div>
+    <div class="field"><span>PC address</span><div class="chips">
+      <button class="chip tap" id="netStreamHost" data-pad="PC address to stream to" data-kind="ip"></button></div></div>
+    <div class="field"><span>Port</span><div class="chips">
+      <button class="chip tap" id="netStreamPort" data-pad="UDP port (receiver 1)"></button></div></div>
+    <div class="note" id="netstreamhint" style="text-align:left"></div>
+  </section>
+  <section data-cat="security">
+    <h2>Security</h2>
+    <div class="field" id="pinrow"><span>Remote PIN</span><div class="chips">
+      <button class="chip" id="setpin">Set…</button><span class="dim" id="pinnote" style="align-self:center"></span></div></div>
+    <div class="expl">Other browsers are view-only until the PIN is entered; it is set on the box itself.</div>
+  </section>
+  <section id="netsec" data-cat="network">
+    <!-- Addresses for everyone; changes behind the PIN like the rest. Wired
+         DHCP is always one tap away here on the touchscreen, so no setting
+         made from this section can leave a box that cannot be reached. -->
+    <h2>Network <button class="helpq" data-help="network" aria-label="Help: network">?</button></h2>
+    <div id="netlist" class="dim">Reading…</div>
+    <div class="err" id="netmsg"></div>
+  </section>
+  <section data-cat="software">
+    <!-- Software and About in one: both are "what is this box running", and
+         the version would otherwise be shown twice. Updates keep their
+         modal, which already polls a running update; a second copy of it
+         here would have to be kept in step. -->
+    <h2>Software &amp; about</h2>
+    <div class="field"><span>Version</span><div class="chips">
+      <b id="aboutver" style="font:700 30px ui-monospace, 'DejaVu Sans Mono', monospace;align-self:center;margin-right:14px">—</b>
+      <button class="chip ro" id="updbtn">Updates…<span class="badge" id="updbadge"></span></button>
+      <span class="dim" id="updline" style="align-self:center">OpenHamShack, Pluto and PicoTuner firmware</span></div></div>
+    <div class="field"><span>Address</span><b id="aboutaddr">—</b></div>
+    <div class="field"><span>Power</span><div class="chips">
+      <button class="chip" id="pwroff" data-power="poweroff">Shut down</button>
+      <button class="chip" id="pwrboot" data-power="reboot">Restart</button>
+      <span class="dim" style="align-self:center">Tap twice. Comes off air first.</span></div></div>
+  </section>
+  <section data-cat="diagnostics" id="diagsec">
+    <!-- For a tester to tell us what is wrong with their box: a missing
+         driver, firmware, tuner. The problems are open to any browser, like
+         the status; the report itself (addresses, logs) and saving or
+         sending it need the PIN from another computer - the daemon checks,
+         this page only says so. -->
+    <h2>Diagnostics <button class="helpq" data-help="diagnostics" aria-label="Help: diagnostics">?</button></h2>
+    <div id="diagprobs" class="dim">Not checked yet</div>
+    <!-- The radio in one line: where, whether it answers, and for a LibreSDR
+         its own on-air/standby (requests.php?onair), which is the only way
+         to see a radio somebody else left keyed. -->
+    <div id="diagradio" class="dim"></div>
+    <div class="field"><span>What happened</span><div class="chips">
+      <button class="chip empty" id="diagnote">Add a note…</button>
+      <button class="chip" id="diagnoteclear" hidden>Clear</button></div></div>
+    <div class="expl">Optional, in your own words - for example <i>picture froze after 10 min on QO-100</i>. It goes at the top of the report, however it is sent.</div>
+    <div class="chips" id="diagacts">
+      <button class="chip" id="diagrefresh">Refresh</button>
+      <a class="chip" id="diagdl" href="/api/diagnostics/report" download>Download report</a>
+      <button class="chip" id="diagsend">Send to the developer</button></div>
+    <div class="chips" id="diagusb"></div>
+    <div class="err" id="diagmsg"></div>
+    <div id="diagref"></div>
+    <div class="expl" id="diagwhat"></div>
+    <div class="expl" id="diaghint"></div>
+    <!-- Both off until the owner turns them on: each sends something off
+         the box without a tap. Plain words on what goes, one tap away. -->
+    <div class="field"><span>Automatic reports</span><div class="chips" data-key="autoReport" data-bool="1">
+      <button class="chip" data-v="true">On</button><button class="chip" data-v="false">Off</button></div></div>
+    <div class="expl">Send a report automatically when something goes wrong.
+      <button class="whatbtn" data-what="autowhat" aria-expanded="false">What is sent</button></div>
+    <div class="expl whatsent" id="autowhat" hidden>The same report as <b>Send to the developer</b> - the PC's make and model, its hardware and drivers, your callsign and settings with every password, PIN and key removed, and the logs - headed with what went wrong. It is sent when an update fails, the transmitter's video encoder stops with an error, the receiver keeps restarting, or OpenHamShack was not shut down properly (including the power being switched off at the wall). At most one of each kind every 6 hours and five a day, never while transmitting - it waits until you stop.</div>
+    <div class="expl" id="autolast"></div>
+    <div class="field"><span>Daily check-in</span><div class="chips" data-key="checkIn" data-bool="1">
+      <button class="chip" data-v="true">On</button><button class="chip" data-v="false">Off</button></div></div>
+    <div class="expl">Tell the developer once a day which version and PC this is - no callsign, location or logs.
+      <button class="whatbtn" data-what="checkinwhat" aria-expanded="false">What is sent</button></div>
+    <div class="expl whatsent" id="checkinwhat" hidden>A random number this box made up for itself, the OpenHamShack version and update channel, the PC's make, model and processor, whether its video encoder works, which kind of tuner is plugged in, and whether the radio is a Pluto or a LibreSDR. Nothing else - no callsign, locator, network addresses, settings or logs. It tells the developer which versions are in use and which PCs OpenHamShack is known to work on.</div>
+  </section>
+  <section data-cat="backup" id="backupsec">
+    <!-- Its own category: Software & power is about the box, this is about
+         the station that would move to another box. Saving, downloading
+         and restoring need the PIN from another computer like any change;
+         the daemon checks, this page only says so. -->
+    <h2>Back up <button class="helpq" data-help="backing-up" aria-label="Help: backing up">?</button></h2>
+    <div class="expl">Your settings, the log and the overlay's pictures, in one file. Not recordings or videos: copy those
+      with a PC. Screens, the update address and Wi-Fi stay with this PC.</div>
+    <div class="field"><span>Passwords</span><div class="chips">
+      <button class="chip" id="bksecrets" aria-pressed="false">Include passwords and keys</button></div></div>
+    <div class="warnbox" id="bksecwarn" hidden><b>The file will hold them in plain text:</b> the remote PIN, the Pluto
+      password, the YouTube key and the stream passphrase. Anyone with the USB stick can read them.</div>
+    <div class="chips" id="bkusb"></div>
+    <div class="chips" id="bkdlrow"><a class="chip" id="bkdl" href="/api/backup/download" download>Download backup</a></div>
+    <div class="err" id="bkmsg"></div>
+  </section>
+  <section data-cat="backup">
+    <h2>Restore <button class="helpq" data-help="backing-up" aria-label="Help: restoring">?</button></h2>
+    <div id="bkfiles" class="dim">Looking…</div>
+    <div class="chips" id="bkuprow"><label class="chip" id="bkuplabel">Restore from a file on this computer…
+      <input type="file" id="bkupload" accept=".json,application/json" hidden></label></div>
+    <div id="bkshow" hidden></div>
+    <div class="err" id="bkrmsg"></div>
+    <div class="expl">Nothing changes until <b>Restore</b> is tapped twice. Settings this PC keeps for itself stay as they are.</div>
+  </section>
+  <section data-cat="controller">
+    <h2>Controller <button class="helpq" data-help="changing-what-the-keys-do" aria-label="Help: changing what the keys do">?</button></h2>
+    <div id="padstate" class="expl"></div>
+    <div class="chips" id="padmodels"></div>
+    <div class="field ctl" id="padbright" style="display:none"><span>Brightness</span><div class="stepper">
+      <button class="chip" data-padb="-10">−</button><div class="big" id="padbval"></div><button class="chip" data-padb="10">+</button></div></div>
+    <div class="field ctl" id="padpagerow"><span>Page</span><div class="chips" id="padpages"></div></div>
+    <div id="paddraw" class="ctl"></div>
+    <div id="padextra" class="ctl"></div>
+    <div class="expl" id="padhint">Tap a control to choose what it does. Pressing one on the controller lights it here.</div>
+    <div class="err" id="padnotes"></div>
+    <div class="chips ctl"><button class="chip" id="padreset">Reset to default</button></div>
+    <div class="err" id="padmsg"></div>
+    <div class="keylist" id="padkeylist"></div>
+    <div id="padkpwrap">
+      <h2 style="margin:10px 0 0">Keypads and keyboards</h2>
+      <div class="expl">A USB keypad or macro pad can be a controller too. Choose it here, then unplug it and plug it back in. Keyboards not chosen are never read, so one kept for typing is safe.</div>
+      <div class="chips ctl" id="padkps"></div>
+    </div>
+  </section>
+</div></div></div>
+
+<!-- QO-100: the satellite's controls, off the main page. The spectrum is
+     BATC's (read by the daemon, /api/qo100); everything else works without
+     the internet, so with no spectrum the page is still the way to tune.
+     One screen's worth at 1920 (docs/ui-review.md): a shorter spectrum and
+     waterfall, the downlink and uplink side by side under them, and the
+     chat folded away until opened. Only the spectrum used to fit; the
+     result of tapping a signal was below the fold. -->
+<div id="qo">
+  <section class="wide">
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <h2 style="margin:0">Wideband transponder <button class="helpq" data-help="wideband-transponder" aria-label="Help: the spectrum">?</button></h2>
+      <span id="qostate" class="dim"></span>
+    </div>
+    <div id="qospec"></div>
+    <div id="qowf"><canvas id="qowfc" width="461" height="180"></canvas><div id="qowfrx"></div>
+      <span class="wft" style="top:0">now</span><span class="wft" style="top:33.3%">1 min</span>
+      <span class="wft" style="top:66.7%">2 min</span></div>
+    <div id="qowfask"></div>
+    <div class="chips" id="qosigs"></div>
+  </section>
+
+  <section class="ctl">
+    <div class="qohead"><h2>Receive (downlink) <button class="helpq" data-help="receive-downlink" aria-label="Help: the downlink">?</button></h2>
+      <div id="qorx"><span id="qorxlabel">—</span> <span id="qorxdetail"></span></div></div>
+    <div class="field"><span>Frequency</span>
+      <div class="big tap" id="qoRxFreq" data-pad="Downlink frequency (MHz)" data-target="rxFrequencyMHz"></div></div>
+    <div class="field"><span></span><div class="chips" id="qochan">
+      <button class="chip" data-qorx="10491.5" data-qosr="1500">Beacon 10491.50</button>
+      <button class="chip" data-qorx="10493.25">10493.25</button>
+      <button class="chip" data-qorx="10494.75">10494.75</button>
+      <button class="chip" data-qorx="10496.25">10496.25</button>
+      <button class="chip" data-qorx="10499.25" data-qosr="333">Net 10499.25</button></div></div>
+    <div class="field"><span>Symbol rate</span><div class="chips" data-key="rxSymbolRateKs" data-num="1">
+      <button class="chip" data-v="33">33</button><button class="chip" data-v="66">66</button>
+      <button class="chip" data-v="125">125</button><button class="chip" data-v="250">250</button>
+      <button class="chip" data-v="333">333</button><button class="chip" data-v="500">500</button>
+      <button class="chip" data-v="1000">1000</button><button class="chip" data-v="1500">1500</button></div></div>
+    <div class="expl" id="qomode"></div>
+    <div class="field"><span>LNB supply</span><div class="chips"><div class="chips" id="qolnbv">
+      <button class="chip" data-lnbv="off">Off</button><button class="chip" data-lnbv="13">13 V</button>
+      <button class="chip" data-lnbv="18">18 V</button></div>
+      <button class="helpq" data-help="lnb-supply" aria-label="Help: LNB supply">?</button></div></div>
+    <div class="field"><span title="The LNB's local oscillator: the tuner is sent the downlink less this">LNB frequency (LO)</span><div class="chips" data-key="qo100LnbMHz" data-num="1">
+      <button class="chip" data-v="9750">9750</button>
+      <button class="chip tap" id="qoLnbOther" data-pad="LNB local oscillator (MHz)" data-target="qo100LnbMHz">Other…</button>
+      <span class="why">9750 MHz for most QO-100 LNBs</span></div></div>
+    <!-- Shorter, not smaller: it is the safety text on this page. The
+         whole of it is in the guide, a "?" away. -->
+    <div class="warnbox"><b>DC on the coax.</b> 13 V or 18 V powers the LNB up the receive cable, only while receiving
+      through it. Leave it <b>Off</b> with a terrestrial antenna, a bias-T or a preamp not built for it: they can be
+      damaged. 18 V picks QO-100's wideband (horizontal) on most LNBs. USB tuners with an LNB regulator only.</div>
+  </section>
+
+  <section class="ctl">
+    <div class="qohead"><h2>Transmit (uplink) <button class="helpq" data-help="transmit-uplink" aria-label="Help: the uplink">?</button></h2>
+      <!-- The two checks named once, each with the round "?" every other
+           control has; they were two chips that read as buttons doing something. -->
+      <div class="expl" id="qosafety"><b>Safety checks on:</b> busy
+        <button class="helpq" data-help="busy-check" aria-label="Help: the busy check">?</button>
+        over-power <button class="helpq" data-help="over-power-watch" aria-label="Help: the over-power watch">?</button></div></div>
+    <div class="field"><span>Uplink</span><div class="qoup">
+      <div class="big tap" id="qoTxFreq" data-pad="Uplink frequency (MHz)" data-target="frequencyMHz"></div>
+      <div class="expl" id="qodown"></div></div></div>
+    <div class="warnbox" id="qonotup" hidden></div>
+    <div class="field"><span>Channel<br><small>downlink</small></span><div class="chips" id="qotxch"></div></div>
+    <div class="field"><span>Symbol rate</span><div class="chips" id="qotxsr">
+      <button class="chip" data-qotxsr="33">33</button><button class="chip" data-qotxsr="66">66</button>
+      <button class="chip" data-qotxsr="125">125</button><button class="chip" data-qotxsr="250">250</button>
+      <button class="chip" data-qotxsr="333">333</button><button class="chip" data-qotxsr="500">500</button>
+      <button class="chip" data-qotxsr="1000">1000</button><button class="chip" data-qotxsr="1500">1500</button></div></div>
+    <div class="expl" id="qotxnote"></div>
+    <div class="chips"><button class="chip" id="qoself">Receive my own uplink</button>
+      <button class="chip" id="qoqpsk">Use DVB-S2 QPSK</button></div>
+    <div class="err" id="qoblocked"></div>
+  </section>
+
+  <!-- BATC's wideband chat, the one beside their spectrum monitor. Read by
+       the daemon while this page is open (/api/qo100/chat); posting goes
+       out as the station's callsign, from the box or a signed-in browser. -->
+  <section class="wide" id="qochat">
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <h2 style="margin:0">Wideband chat <button class="helpq" data-help="wideband-chat" aria-label="Help: wideband chat">?</button></h2><span id="qochatstate" class="dim"></span>
+      <button class="chip ro" id="qochatfold" aria-expanded="false" aria-controls="qochatin">Open the chat</button></div>
+    <div id="qochatin">
+    <div id="qochatbody"><div id="qochatlog"></div>
+      <div id="qochatusers"><div class="dim" id="qochatuserhead">In the chat</div><div id="qochatuserlist"></div></div></div>
+    <div id="qochatdraft"><div id="qochattext"></div>
+      <div class="chips"><button class="chip" id="qochatsend">Send</button><button class="chip" id="qochatedit">Edit…</button>
+        <button class="chip" id="qochatdrop">Cancel</button></div></div>
+    <div class="chips"><button class="chip" id="qochatwrite">Write…</button><button class="chip" id="qoreport">Send report</button>
+      <button class="chip" id="qochatname">Name…</button><span id="qochaterr" class="err" style="align-self:center"></span></div>
+    <div class="expl" id="qochatnote"></div>
+    </div>
+  </section>
+</div>
+
+<!-- HamTV: the ISS's DATV downlink. Passes are worked out by the daemon
+     (/api/hamtv) from CelesTrak's elements and the station's locator;
+     tuning is an ordinary receive change through /api/config. -->
+<div id="ham">
+  <section>
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <h2 style="margin:0">Next pass <button class="helpq" data-help="hamtv" aria-label="Help: HamTV">?</button></h2><span id="hamstate" class="dim"></span></div>
+    <div id="hamnext"><div id="hamcount">—</div><div id="hamnextd"></div></div>
+    <div class="expl" id="hamstatus"></div>
+  </section>
+
+  <section>
+    <h2>Receive the downlink</h2>
+    <div id="hamrx" style="border-radius:14px;padding:12px 20px;background:var(--chip);display:grid;gap:4px">
+      <div id="hamrxlabel" style="font-size:30px;font-weight:800">—</div>
+      <div id="hamrxdetail" style="font:600 22px ui-monospace,'DejaVu Sans Mono',monospace;color:var(--dim)"></div></div>
+    <div class="field"><span>Channel</span><div class="chips" id="hamch"></div></div>
+    <div class="field"><span>Down&shy;converter</span><div class="chips">
+      <button class="chip tap" id="hamoff" data-pad="Downconverter offset (MHz); 0 for none" data-target="hamtvOffsetMHz"></button>
+      <span class="why">its offset in MHz, if one is fitted</span></div></div>
+    <div class="expl" id="hamtune"></div>
+  </section>
+
+  <section class="wide">
+    <h2>Passes, next three days</h2>
+    <div id="hamtable"></div>
+    <div class="expl" id="hamtle"></div>
+    <div class="expl" id="hamparams"></div>
+    <div class="expl">To receive it: a dish of 0.6-1.2 m (or a good helix) with an <b>LNA at the feed</b> for 2.4 GHz,
+      pointed by hand or tracked; it is RHCP and about 2 W from a patch looking down. Without a station, BATC and
+      ARISS show it from their ground stations at <b>live.ariss.org/hamtv</b>.</div>
+  </section>
+</div>
+
+<!-- Aiming: for lining up an antenna or a dish. Read-only apart from the
+     peak reset, so a remote browser without the PIN can watch it (from a
+     phone at the mast); one with the PIN, or the box's own screen, also
+     turns aiming mode on for the pad's keys and the TV. -->
+<div id="aim">
+  <div id="aimonair">ON AIR</div>
+  <div id="aimtop">
+    <div id="aimstate">—</div>
+    <div class="chips" id="aimrx"></div>
+    <div class="chips"><button class="chip ro" id="aimtone">Tone off</button><button class="chip ro" id="aimfull">Full screen</button><button class="helpq" data-help="aiming" aria-label="Help: aiming">?</button></div>
+  </div>
+  <div id="aimbig" class="none"><div id="aimnum">—</div><div id="aimunit"></div></div>
+  <div id="aimrow">
+    <div class="aimcell"><span id="aimk1">MER</span><b id="aimv1">—</b></div>
+    <div class="aimcell"><span id="aimk2">Needs</span><b id="aimv2">—</b></div>
+    <div class="aimcell" id="aimpeakcell"><div style="display:flex;flex-direction:column;min-width:0"><span id="aimk3">Peak</span><b id="aimv3">—</b></div>
+      <button class="chip ctl" id="aimreset">Reset</button></div>
+  </div>
+  <div id="aimspark"><div id="aimsvg"></div><div id="aimsparkcap"></div></div>
+  <div class="expl" id="aimhint"></div>
+</div>
+
+<!-- Log: DATV contacts (/api/log). The daemon offers what it saw - a station
+     locked long enough, with what was sent and reported around it - and the
+     operator logs it with one tap, edits it, or dismisses it. Reading and
+     exporting are open to a remote browser; every change needs the PIN. -->
+<div id="logp">
+  <section id="logsugsec">
+    <h2>Waiting to be logged <button class="helpq" data-help="waiting-to-be-logged" aria-label="Help: contacts waiting to be logged">?</button></h2>
+    <div id="logsugs"></div>
+    <div class="expl">Offered when a station with a callsign in its name has been locked for 20 s or more,
+      with your transmissions and QO-100 chat reports around it. Nothing goes in the log until you tap <b>Log</b>.</div>
+  </section>
+  <section>
+    <div id="logtools">
+      <h2 style="margin:0">Log <button class="helpq" data-help="logbook" aria-label="Help: the logbook">?</button></h2>
+      <span id="logcounts"></span>
+      <span style="flex:1"></span>
+      <button class="chip ctl" id="lognew">+ New contact</button>
+      <a class="chip" id="logadif" href="/api/log/export?format=adif" download>Export ADIF</a>
+      <a class="chip" id="logcsv" href="/api/log/export?format=csv" download>Export CSV</a>
+    </div>
+    <div id="logtools2" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="chip ro" id="logsearch">Search…</button>
+      <div class="chips" id="logbands"></div>
+    </div>
+    <div id="loglist"></div>
+    <div class="expl" id="lognote"></div>
+  </section>
+</div>
+
+<!-- Help: the user guide as the box serves it (/help, no internet needed),
+     searched from this bar so the on-screen keyboard can type into it. -->
+<!-- Its own Back is gone: the header's is the one Back on every page, and
+     two of them one above the other was one too many. -->
+<div id="helpv">
+  <div id="helpbar">
+    <b id="helptitle">User guide</b>
+    <button class="chip ro" id="helpsearch">Search the guide…</button>
+    <button class="chip ro" id="helpclear" hidden>Clear</button>
+    <span class="dim" id="helpcount"></span>
+    <button class="chip ro" id="helptoc">Contents</button>
+  </div>
+  <iframe id="helpframe" title="OpenHamShack user guide"></iframe>
+</div>
+
+<footer>
+  <div id="footrow">
+    <button id="prev" class="chip">Preview on TV</button>
+    <button id="ptt">TRANSMIT</button>
+  </div>
+  <div class="note" id="pttnote">Tap TRANSMIT, then tap again within 4 s to go on air. Transmit only where your licence allows.</div>
+</footer>
+
+<!-- One screen, Split and Picture (screen.js): the received picture's place.
+     mpv is put over #picslot by screens.py, from the rectangle this page
+     reports, so nothing is drawn inside it but what shows when there is
+     no picture. In Picture the slot fills the screen above #picbar. -->
+<div id="pictcol">
+  <div id="piclabel">Received picture</div>
+  <div id="picslot"><span id="picempty">No picture yet: nothing received</span></div>
+  <button class="rxstrip ro" id="strip2" aria-label="Received signal: open the signal log"></button>
+  <div class="chips" id="picacts">
+    <button class="chip" id="picgo" data-mode="picture">Fill the screen</button>
+    <button class="chip" id="picrec">● Record</button></div>
+</div>
+<div id="picbar">
+  <button class="rxstrip ro" id="strip3" aria-label="Received signal: open the signal log"></button>
+  <button class="chip" data-mode="split">Split</button>
+  <button class="chip" data-mode="console">Console</button>
+  <button class="chip ro" id="barhide">Hide ⌄</button>
+</div>
+
+<div id="upd" class="modal"><div class="modalcard">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 style="margin:0">Updates <button class="helpq" data-help="updates" aria-label="Help: updates">?</button></h2><button class="chip ro" id="updclose">Close</button></div>
+  <!-- Trying from the USB stick: OpenHamShack and Debian updates would be written
+       to memory, gone at shutdown, and fetched again at every start; the
+       radio and tuner firmware change those devices, so they stay. -->
+  <div class="warnbox" id="updlive" style="display:none">You are trying OpenHamShack from the USB stick, so OpenHamShack and
+    operating-system updates are off: an update would be kept in memory only and lost at shutdown, and the stick
+    starts the version it was made with every time. Install OpenHamShack to keep it up to date. Pluto and PicoTuner
+    firmware can still be updated - that changes the radio and the tuner, not this PC.</div>
+  <!-- OpenHamShack: which feed it follows, said in one plain line each, and a way
+       back to the version the last update replaced, shown only when the box
+       kept one. -->
+  <div class="updrow" style="display:grid;gap:10px;justify-content:stretch">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <div><b>OpenHamShack</b><div class="dim" id="lbver">Checking…</div></div>
+      <button class="chip" id="ohsupd" disabled>Checking…</button></div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div class="chips" id="lbch"><button class="chip" data-ch="stable">Stable</button><button class="chip" data-ch="beta">Beta</button></div>
+      <span class="dim" style="flex:1;min-width:220px">Stable: releases that have been tried. Beta: fixes the same day, for testers.</span></div>
+    <!-- Updating at start-up, an ordinary setting (the PIN from another
+         browser, as for the channel). -->
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div class="chips" data-key="autoUpdate" data-bool="1"><button class="chip" data-v="true">On</button><button class="chip" data-v="false">Off</button></div>
+      <span class="dim" style="flex:1;min-width:220px">Update automatically at start-up - never while transmitting or recording.</span></div>
+    <div class="warnbox" id="lbnote" style="display:none"></div>
+    <div id="lbbackrow" style="display:none;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="dim" style="flex:1;min-width:160px">Not working as well as before?</span><button class="chip" id="lbback">Go back</button></div>
+  </div>
+  <div class="updrow"><div><b>Pluto firmware</b><div class="dim" id="plver">Checking…</div></div><button class="chip" id="plupd" disabled>Checking…</button></div>
+  <!-- PicoTuner: which firmware to load defaults to the one it runs; the
+       other is a deliberate choice with its board named, because the
+       Ethernet builds only run on a WIZnet EVB-Pico. -->
+  <div class="updrow" style="display:grid;gap:10px;justify-content:stretch">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <div><b>PicoTuner firmware</b><div class="dim" id="ptver">Checking…</div></div>
+      <button class="chip" id="ptupd" disabled>Checking…</button></div>
+    <div class="chips" id="ptfw"></div>
+    <div class="warnbox" id="ptwarn" style="display:none"></div>
+  </div>
+  <!-- Debian's security updates: nothing to tap. They install themselves
+       once a day when nothing is on air or recording; this says when, what,
+       and whether a restart is waiting (Restart is in Software & about). -->
+  <div class="updrow" style="display:grid;gap:6px;justify-content:stretch">
+    <div><b>Operating system security updates</b><div class="dim" id="osver">Checking…</div></div>
+    <div class="dim" id="ospkgs" style="font-size:17px;overflow-wrap:anywhere"></div>
+  </div>
+  <div id="updjob" class="dim" style="min-height:30px"></div>
+  <div style="display:flex;gap:10px"><button class="chip ro" id="updcheck">Check now</button>
+    <span class="dim" style="align-self:center">Updates never run while transmitting. Flashing the Pluto takes about 3 minutes - do not unplug it. The receiver stops while the PicoTuner is loaded.</span></div>
+</div></div>
+
+<!-- Signal log: the receiver's MER over the last minutes or hours, to show
+     the other station (or yourself, after moving an antenna) when and how
+     often the link dropped. Read-only, so a remote browser has it unsigned. -->
+<div id="sig" class="modal"><div class="modalcard" style="width:min(1500px, 96vw)">
+  <div class="mhead" id="sighead">
+    <h2>Received signal <button class="helpq" data-help="signal" aria-label="Help: the signal log">?</button></h2>
+    <button class="chip ro mclose" id="sigclose">Close</button>
+    <div class="chips" id="sigrx"></div>
+    <div class="chips" id="sigspan">
+      <button class="chip ro" data-min="10">10 min</button><button class="chip ro" data-min="60">1 hour</button>
+      <button class="chip ro" data-min="120">2 hours</button></div></div>
+  <div id="sigsum"></div>
+  <div id="siggraph"></div>
+  <div id="sigread" class="dim"></div>
+  <div class="dim siglegend"><span><span class="sigkey" style="background:var(--sel)"></span>MER (lowest each second)</span>
+    <span><span class="sigkey" style="background:var(--warn)"></span>needed to decode the mode received</span>
+    <span><span class="sigkey" style="background:#f6c9c5;height:18px"></span>not locked</span>
+    <span>blank: receiver off or no tuner</span></div>
+</div></div>
+
+<!-- One receiver's tuning, for the receivers after the first (whose own
+     settings are the Receive section's). Changes go to /api/rx/tune. -->
+<div id="rxt" class="modal"><div class="modalcard" style="width:min(900px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <h2 style="margin:0" id="rxttitle">Receiver</h2><button class="chip ro" id="rxtclose">Close</button></div>
+  <div class="dim" id="rxtstate"></div>
+  <div class="field"><span>Frequency</span><div class="big tap" id="rxtfreq"></div></div>
+  <div class="field"><span></span><div class="chips" id="rxtpresets">
+    <button class="chip" data-rxtf="146.5" data-rxtlo="0">146.50</button>
+    <button class="chip" data-rxtf="437" data-rxtlo="0">437.00</button>
+    <button class="chip" data-rxtf="1255" data-rxtlo="0">1255.00</button>
+    <button class="chip" data-rxtf="10491.5" data-rxtlo="qo">QO-100 beacon</button>
+    <button class="chip ro" data-page="qo">QO-100 page…</button></div></div>
+  <div class="field"><span>Symbol rate</span><div class="chips" id="rxtsr" data-compact="select">
+    <button class="chip" data-rxtsr="66">66</button><button class="chip" data-rxtsr="125">125</button>
+    <button class="chip" data-rxtsr="250">250</button><button class="chip" data-rxtsr="333">333</button>
+    <button class="chip" data-rxtsr="500">500</button><button class="chip" data-rxtsr="1000">1000</button>
+    <button class="chip" data-rxtsr="1500">1500</button><button class="chip" data-rxtsr="2000">2000</button>
+    <button class="chip" data-rxtsr="3000">3000</button><button class="chip" data-rxtsr="4000">4000</button></div></div>
+  <div class="field" id="rxtlnbrow"><span>LNB supply</span><div class="chips" id="rxtlnb">
+    <button class="chip" data-rxtlnb="off">Off</button><button class="chip" data-rxtlnb="13">13 V</button>
+    <button class="chip" data-rxtlnb="18">18 V</button></div></div>
+  <div class="field" id="rxtonrow"><span>Receiver</span><div class="chips" id="rxton">
+    <button class="chip" data-rxton="1">On</button><button class="chip" data-rxton="0">Off</button></div></div>
+  <div class="err" id="rxterr"></div>
+</div></div>
+
+<!-- A controller's control: what it does. A knob has two jobs, turn and
+     press, chosen one at a time. -->
+<div id="padpick" class="modal"><div class="modalcard" style="width:min(1000px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <h2 style="margin:0" id="padpicktitle">K1</h2><button class="chip ro" id="padpickclose">Close</button></div>
+  <div class="chips" id="padpickslots"></div>
+  <div id="padpicklist"></div>
+  <div class="err" id="padpickmsg"></div>
+</div></div>
+
+<div id="rxpick" class="modal"><div class="modalcard" style="width:min(760px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <h2 style="margin:0" id="rxpicktitle">Receive on</h2><button class="chip ro" id="rxpickclose">Close</button></div>
+  <div class="rxpickrow" id="rxpicklist"></div>
+</div></div>
+
+<div id="ytm" class="modal"><div class="modalcard">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 style="margin:0">YouTube Live</h2><button class="chip ro" id="ytclose">Close</button></div>
+  <div id="ytstate"><div id="ytstatelabel">—</div><div class="dim" id="ytmsg"></div></div>
+  <div class="field"><span>Stream</span><div class="chips" id="ytsource">
+    <button class="chip" data-ys="rx">Received</button><button class="chip" data-ys="tx">Transmitted</button></div></div>
+  <div class="field"><span>Video</span><div class="chips" id="ytmode">
+    <button class="chip" data-ym="copy">Pass-through (H.265/H.264)</button><button class="chip" data-ym="h264">Re-encode H.264</button></div></div>
+  <div class="field"><span>Server</span><div class="chips" id="yturl">
+    <button class="chip" data-yu="rtmps://a.rtmps.youtube.com/live2">Secure (RTMPS)</button>
+    <button class="chip" data-yu="rtmp://a.rtmp.youtube.com/live2">Plain RTMP</button></div></div>
+  <div class="field"><span>Stream key</span><div style="display:flex;gap:8px;align-items:center">
+    <input id="ytkey" type="password" autocomplete="off" spellcheck="false" placeholder="xxxx-xxxx-xxxx-xxxx-xxxx" />
+    <button class="chip" id="ytpaste">Paste</button><button class="chip" id="ytsave">Save</button></div></div>
+  <div class="dim" id="ytkeynote"></div>
+  <button id="ytgo">Go live</button>
+</div></div>
+
+<!-- Video files: the box's media folder, then any USB drive. Choosing one
+     saves videoFile; the daemon checks it is in one of those places. -->
+<div id="media" class="modal"><div class="modalcard" style="width:min(1100px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 style="margin:0">Video files</h2><button class="chip ro" id="mediaclose">Close</button></div>
+  <div id="medialist"></div>
+  <div id="mediamsg" class="dim" style="min-height:28px"></div>
+  <div id="mediaupl" style="display:none;gap:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span id="mediaupltext"></span><button class="chip" id="mediacancel">Cancel upload</button></div>
+    <div id="mediabar"><i></i></div></div>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <label class="chip" id="mediapick" style="display:inline-flex;align-items:center;cursor:pointer">Upload a video…
+      <input type="file" id="mediafile" accept=".mp4,.mkv,.mov,.ts,.m2ts,.webm,video/*" style="display:none"></label>
+    <span class="dim" id="mediaspace"></span></div>
+  <div class="dim">Uploading needs a browser with a file picker: open this console on a computer on the same
+    network and enter the PIN. Videos on a USB drive play from the drive and are deleted on a computer, not here.</div>
+</div></div>
+
+<!-- Test card pictures: the station's own, then any on a USB stick. A
+     picture is copied onto the box (it is left on for an evening; the stick
+     goes back in a pocket), checked and given a thumbnail by the daemon. -->
+<div id="tcm" class="modal"><div class="modalcard" style="width:min(1100px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 style="margin:0">Test card pictures</h2><button class="chip ro" id="tcclose">Close</button></div>
+  <div id="tclist"></div>
+  <div id="tcmsg" class="dim" style="min-height:28px"></div>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <label class="chip" id="tcpick" style="display:inline-flex;align-items:center;cursor:pointer">Upload a picture…
+      <input type="file" id="tcfile" accept=".png,.jpg,.jpeg,image/png,image/jpeg" style="display:none"></label>
+    <span class="dim" id="tcroom"></span></div>
+  <h3>On a USB stick</h3>
+  <div id="tcusb"></div>
+  <div class="dim">PNG or JPEG, up to 10 MB. On air a picture is fitted to the picture size with its shape kept:
+    a 4:3 picture gets black bars at the sides. Uploading needs a browser with a file picker: open this console on
+    a computer on the same network and enter the PIN.</div>
+</div></div>
+
+<div id="ov">
+  <div id="ovbar">
+    <h2>Overlay</h2>
+    <button class="chip" data-ovadd="text">+ Text</button><button class="chip" data-ovadd="clock">+ Clock</button>
+    <button class="chip" data-ovadd="weather">+ Weather</button><button class="chip" data-ovadd="ticker">+ Ticker</button>
+    <button class="chip" data-ovadd="image">+ Image</button>
+    <button class="chip" id="ovloc" style="margin-left:14px">Locator</button>
+    <div class="chips" data-key="callsignOverlay" data-bool="1" style="margin-left:14px"><button class="chip" data-v="true">Overlay on</button><button class="chip" data-v="false">Off</button></div>
+    <button class="chip" id="ovrender" style="margin-left:auto;min-width:130px">Render</button>
+    <button class="chip ro" id="ovcancel">Cancel</button>
+    <button class="chip on" id="ovsave" style="min-width:120px">Save</button>
+  </div>
+  <div id="ovbody">
+    <div id="ovleft">
+      <div id="ovstage"></div>
+      <div id="ovmsg"></div>
+      <div class="dim">Tap an element to select it, drag it to move it. Text keeps to the font the
+        transmitter uses; Render shows the exact picture ffmpeg makes from this layout.</div>
+    </div>
+    <div id="ovside"></div>
+  </div>
+</div>
+
+<!-- Wi-Fi: scan, pick, passphrase on the on-screen keyboard. -->
+<div id="wifim" class="modal"><div class="modalcard" style="width:min(1000px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+    <h2 style="margin:0" id="wifititle">Wi-Fi</h2>
+    <div class="chips" style="margin-left:auto"><button class="chip ro" id="wifiscan">Scan again</button>
+      <button class="chip" id="wifihidden">Hidden network…</button><button class="chip ro" id="wificlose">Close</button></div></div>
+  <div id="wifilist"></div>
+  <div id="wifimsg" class="dim" style="min-height:28px"></div>
+</div></div>
+
+<!-- Static IPv4 for one interface. Each value comes from the number pad. -->
+<div id="netip" class="modal"><div class="modalcard" style="width:min(900px, 96vw)">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2 style="margin:0" id="netiptitle">Static address</h2></div>
+  <div id="netipform" style="display:grid;gap:8px">
+    <div class="field"><span>Address</span><div><button class="chip" data-nip="address"></button></div></div>
+    <div class="field"><span>Prefix</span><div><button class="chip" data-nip="prefix"></button>
+      <span class="dim" id="netipmask"></span></div></div>
+    <div class="field"><span>Gateway</span><div><button class="chip" data-nip="gateway"></button></div></div>
+    <div class="field"><span>DNS</span><div><button class="chip" data-nip="dns"></button></div></div>
+  </div>
+  <div class="warnbox" id="netipwarn"></div>
+  <div class="err" id="netiperr"></div>
+  <div class="chips" id="netipbar"><button class="chip ro" id="netipclose">Cancel</button><button class="chip on" id="netipapply">Apply</button></div>
+</div></div>
+
+<!-- One log entry: every value is a button that opens the on-screen
+     keyboard or pad, as everywhere else on the box. -->
+<div id="loged" class="modal"><div class="modalcard">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <h2 style="margin:0" id="logedtitle">Contact</h2><span class="dim" id="logedsrc"></span></div>
+  <div class="field"><span>Callsign</span><div class="row2"><button class="chip lv ctl" data-lf="call"></button></div></div>
+  <div class="field"><span>Date, UTC</span><div class="row2"><button class="chip lv ctl" data-lf="date"></button></div></div>
+  <div class="field"><span>Time, UTC</span><div class="row2">
+    <button class="chip lv ctl" data-lf="ton"></button><span class="dim">to</span>
+    <button class="chip lv ctl" data-lf="toff"></button><button class="chip ctl" id="lognow">Now</button></div></div>
+  <div class="field"><span>Frequency</span><div class="row2">
+    <span class="dim">you sent on</span><button class="chip lv ctl" data-lf="freqMHz"></button>
+    <span class="dim">received on</span><button class="chip lv ctl" data-lf="freqRxMHz"></button>
+    <button class="chip ctl" id="logcur">As set now</button></div></div>
+  <div class="field"><span>Satellite</span><div class="chips"><button class="chip ctl" id="logsat">QO-100</button></div></div>
+  <div class="field"><span>Their signal</span><div class="logmode" id="logrxmode"></div></div>
+  <div class="field"><span>Your signal</span><div class="logmode" id="logtxmode"></div></div>
+  <div class="field"><span>Report sent</span><div class="row2"><button class="chip lv wide ctl" data-lf="rstSent"></button></div></div>
+  <div class="field"><span>Report received</span><div class="row2"><button class="chip lv wide ctl" data-lf="rstRcvd"></button></div></div>
+  <div class="field"><span>Name</span><div class="row2"><button class="chip lv wide ctl" data-lf="name"></button></div></div>
+  <div class="field"><span>QTH</span><div class="row2"><button class="chip lv wide ctl" data-lf="qth"></button></div></div>
+  <div class="field"><span>Locator</span><div class="row2"><button class="chip lv ctl" data-lf="locator"></button></div></div>
+  <div class="field"><span>Your power</span><div class="row2">
+    <span class="dim">gain</span><button class="chip lv ctl" data-lf="gainDb"></button>
+    <span class="dim">power</span><button class="chip lv ctl" data-lf="powerW"></button></div></div>
+  <div class="field"><span>Notes</span><div class="row2"><button class="chip lv wide ctl" data-lf="notes"></button></div></div>
+  <div class="err" id="logederr"></div>
+  <div id="logedbar">
+    <button class="chip ctl" id="logeddel">Delete</button>
+    <button class="chip ro" id="logedcancel">Cancel</button>
+    <button class="chip on ctl" id="logedsave">Save</button></div>
+</div></div>
+
+<!-- First-run setup. The chips and address buttons are the same kinds
+     Settings uses (data-key, data-lic, data-pad), so they save through the
+     same handlers with the same rules - the Pluto's address swap included. -->
+<div id="setup"><div id="setupcard">
+  <div id="setuphead"><h2>Set up OpenHamShack</h2><span class="dim" id="setupstep"></span>
+    <button class="chip" id="setuplater">Set up later</button></div>
+  <div id="setupbody">
+    <!-- Only on a box that is looking for an update as the wizard opens:
+         a tester sets up on the newest code, not on the ISO's. -->
+    <div class="sstep" data-step="update">
+      <h3>Getting the latest version</h3>
+      <p class="lead">Before the questions, OpenHamShack makes sure it is the newest version, so that you set up on it.</p>
+      <div id="wupdbar"><i></i></div>
+      <div id="wupdmsg"></div>
+      <div class="expl" id="wupdnote"></div>
+    </div>
+    <div class="sstep" data-step="call">
+      <h3>Your callsign</h3>
+      <p class="lead">Welcome. A few questions and a quick check of this PC, and OpenHamShack is ready to use.</p>
+      <div class="field"><span>Callsign</span><div class="chips"><button class="chip wbig" id="wcall"></button></div></div>
+      <div class="err" id="wcallerr"></div>
+      <div class="expl">Sent with every transmission, in the picture and in the stream's name. <b>OpenHamShack will not transmit
+        until it is set.</b></div>
+    </div>
+    <div class="sstep" data-step="loc">
+      <h3>Where you are</h3>
+      <div class="field"><span>Locator</span><div class="chips"><button class="chip wbig" id="wloc"></button></div></div>
+      <div class="err" id="wlocerr"></div>
+      <div class="expl">Your Maidenhead locator, 4 or 6 characters (IO85 or IO85jw). Optional: it is used for ISS passes,
+        the weather on the picture overlay and the log.</div>
+    </div>
+    <div class="sstep" data-step="radio">
+      <h3>Your radio</h3>
+      <div class="field"><span>Radio</span><div class="chips" data-key="radio">
+        <button class="chip" data-v="pluto">Pluto</button><button class="chip" data-v="libresdr">LibreSDR</button></div></div>
+      <div class="field"><span>Address</span><div class="chips">
+        <button class="chip tap wbig" id="whost" data-target="host" data-pad="Radio address" data-kind="ip"></button>
+        <button class="chip" id="wplutoip">Use 192.168.2.1</button></div></div>
+      <div class="expl">A <b>Pluto</b> plugged in by USB is usually at <b>192.168.2.1</b>. A <b>LibreSDR</b> is on your network:
+        its address is in your router's list of devices. The radio must run DATV firmware (F5OEO's for a Pluto, DL1JM's
+        for a LibreSDR); OpenHamShack sets the radio's frequency and power itself.</div>
+    </div>
+    <div class="sstep" data-step="tuner">
+      <h3>Your receiver</h3>
+      <div class="field"><span>Tuner</span><div class="chips" id="wtuner">
+        <button class="chip" data-wt="usb">USB tuner</button><button class="chip" data-wt="network">PicoTuner network</button>
+        <button class="chip" data-wt="pluto">Tuner on the Pluto</button>
+        <button class="chip" data-wt="none">None</button></div></div>
+      <div class="field" id="wpicorow"><span>PicoTuner</span><div class="chips">
+        <button class="chip tap wbig" id="wpico" data-target="picoHost" data-pad="PicoTuner address" data-kind="ip"></button></div></div>
+      <div class="expl"><b>USB tuner:</b> a MiniTiouner, or a PicoTuner with its USB firmware - found by itself.
+        <b>PicoTuner network:</b> a PicoTuner with the Ethernet firmware, at the address it shows.
+        <b>Tuner on the Pluto:</b> the tuner on a powered USB hub on the Pluto, with the Pluto on Ethernet; the
+        Pluto's own longmynd runs it (PlutoDVB2, not yet tried on real hardware).
+        <b>None:</b> transmit only.</div>
+    </div>
+    <div class="sstep" data-step="licence">
+      <h3>Your licence</h3>
+      <div class="field"><span>Region</span><div class="chips" id="wlicence">
+        <button class="chip" data-lic="scotland">Scotland</button><button class="chip" data-lic="uk">Rest of UK</button>
+        <button class="chip" data-lic="nonov">No 146 NoV</button>
+        <button class="chip" data-lic="iaru1">IARU Region 1</button><button class="chip" data-lic="other">Other: no band check</button></div></div>
+      <div class="expl" id="wlictop"></div>
+      <div class="warnbox" id="wlicother" hidden></div>
+      <div class="expl">OpenHamShack will not transmit outside the amateur bands your choice allows. <b>Scotland</b> also covers
+        within 40 km of the Scottish border or coast. <b>IARU Region 1</b> is Europe, Africa and the Middle East.</div>
+    </div>
+    <div class="sstep" data-step="test">
+      <h3>Checking this PC</h3>
+      <div class="chips"><button class="chip" id="wtestrun">Run self-test</button>
+        <span class="dim" style="align-self:center">Up to half a minute. Nothing is transmitted.</span></div>
+      <div class="err" id="wtestmsg"></div>
+      <div class="stlist" id="wtest"></div>
+    </div>
+    <div class="sstep" data-step="done">
+      <h3>Ready</h3>
+      <p class="lead" id="wdonelead"></p>
+      <div id="wsum"></div>
+      <!-- What to do next: the summary listed settings, and nothing pointed
+           at a first thing to try. Each finishes setup and sets the console
+           up for that task; neither transmits by itself. -->
+      <h3 class="wnext">Then try</h3>
+      <div class="chips" id="wtry">
+        <button class="chip" id="wtryrx">Receiving: QO-100's beacon</button>
+        <button class="chip" id="wtrytx">Transmitting: a test card on 437 MHz, into a dummy load</button></div>
+    </div>
+  </div>
+  <div id="setupnav"><button class="chip" id="setupback">‹ Back</button><button class="chip on" id="setupnext">Next ›</button></div>
+</div></div>
+
+<div id="kbd"><div id="kbdcard">
+  <div id="kbdtitle"></div>
+  <div id="kbdval"></div>
+  <input id="kbdin" autocomplete="off" spellcheck="false" aria-label="Type here">
+  <div id="kbdkeys"></div>
+</div></div>
+
+<div id="pad"><div id="padcard">
+  <div id="padtitle"></div>
+  <div id="padval"></div>
+  <div id="padkeys"></div>
+  <div id="padact"><button id="padcancel">Cancel</button><button class="ok" id="padok">OK</button></div>
+</div></div>
+
+<!-- The console's code, one file per area, run in this order once the page
+     is parsed (defer). Classic scripts, not modules: what a file declares at
+     top level every other file can use, but only after that file has run,
+     and a function is hoisted only within its own file. So code that runs
+     at load time - not inside a handler, a timer or a function called later
+     - may use only what is above it in this list; main.js, which starts the
+     polling, stays last; and the order of the listeners each file adds (who
+     sees a click first) is this order. A new area is a new file and a line
+     here, nothing else: the daemon serves any js/<name>.js and adds
+     ?v=<version> to every src and href below when it serves this page. -->
+<script defer src="js/core.js"></script>
+<script defer src="js/notices.js"></script>
+<script defer src="js/input.js"></script>
+<script defer src="js/transmit.js"></script>
+<script defer src="js/battery.js"></script>
+<script defer src="js/updates.js"></script>
+<script defer src="js/help.js"></script>
+<script defer src="js/overlay.js"></script>
+<script defer src="js/settings.js"></script>
+<script defer src="js/diagnostics.js"></script>
+<script defer src="js/backup.js"></script>
+<script defer src="js/controller.js"></script>
+<script defer src="js/qr.js"></script>
+<script defer src="js/picture.js"></script>
+<script defer src="js/network.js"></script>
+<script defer src="js/setup.js"></script>
+<script defer src="js/youtube.js"></script>
+<script defer src="js/display.js"></script>
+<script defer src="js/signal.js"></script>
+<script defer src="js/receivers.js"></script>
+<script defer src="js/strip.js"></script>
+<script defer src="js/screen.js"></script>
+<script defer src="js/qo100.js"></script>
+<script defer src="js/hamtv.js"></script>
+<script defer src="js/aim.js"></script>
+<script defer src="js/log.js"></script>
+<script defer src="js/sheets.js"></script>
+<script defer src="js/density.js"></script>
+<script defer src="js/main.js"></script>
+</body>
+</html>

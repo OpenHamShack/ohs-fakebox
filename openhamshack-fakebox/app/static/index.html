@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="{{BASE}}">
+<title>OpenHamShack fakebox</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#667085; --line:#e3e6eb; --ok:#1a7f37; --warn:#b54708; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --card:#1d2128; --fg:#e6e8eb; --muted:#9aa3b0; --line:#2c323b; --ok:#4ac26b; --warn:#f79009; --bad:#f97066; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 4px 0 2px; }
+  .sub { color: var(--muted); margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: collapse; } td, th { text-align: left; padding: 3px 6px 3px 0; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .problems li { color: var(--warn); }
+  button { font: inherit; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  .muted { color: var(--muted); } code { font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>OpenHamShack fakebox</h1>
+  <div class="sub">The real OpenHamShack box API with the radio faked, for testing OpenHamShack Remote on real devices.
+    Settings (clip, codec, loss, PIN) are this app's settings in Dock360; changing one restarts it.</div>
+
+  <div class="card"><h2>Now</h2><dl id="now"><dt>Loading</dt><dd></dd></dl>
+    <ul class="problems" id="problems"></ul></div>
+
+  <div class="card"><h2>Devices</h2><div id="clients" class="muted">-</div></div>
+
+  <div class="card"><h2>Clips</h2>
+    <div id="clips" class="muted">-</div>
+    <p><input type="file" id="file" accept=".mov,.mp4,.mkv,.ts,.m4v,.webm"> <button id="upload">Upload</button>
+      <span id="upmsg" class="muted"></span></p>
+    <p class="muted">A clip is chosen by its file name in the <b>Clip</b> setting. Empty or <code>testcard</code> is the test card.</p>
+  </div>
+
+  <div class="card"><h2>Code</h2><div id="pinned" class="muted">-</div></div>
+</main>
+<script>
+"use strict";
+// Every URL is relative to <base>, which the server builds from
+// X-Forwarded-Prefix on each request - so this works under a path prefix,
+// at the root of a subdomain, and over plain HTTP alike.
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ago = s => s < 60 ? s + " s" : s < 3600 ? Math.round(s / 60) + " min" : Math.round(s / 3600) + " h";
+
+function row(k, v, cls) { return `<dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ""}>${v}</dd>`; }
+
+function render(s) {
+  const st = s.settings;
+  $("now").innerHTML =
+    row("Device port", s.deviceUp ? `listening (container ${s.devicePort})` : "NOT listening", s.deviceUp ? "ok" : "bad") +
+    row("Signal", st.noSignal ? "no signal (unlocked, null packets)" : "locked", st.noSignal ? "warn" : "") +
+    row("Clip", esc(st.clip)) +
+    row("Video / audio", esc(st.codec.toUpperCase()) + " / " + esc(st.audio.toUpperCase())) +
+    row("Packet loss", st.lossPercent ? esc(st.lossPercent) + " %" : "none", st.lossPercent ? "warn" : "") +
+    row("Cut every", st.cutSeconds ? esc(st.cutSeconds) + " s" : "never") +
+    row("Streams", `${s.streams} of ${s.streamMax}`) +
+    row("PIN sessions", esc(s.sessions)) +
+    row("Transmitter", s.radio.keyed ? `KEYED (fake) by ${esc(s.radio.remote || "box")}` : "off" + (s.radio.error ? " - " + esc(s.radio.error) : ""),
+        s.radio.keyed ? "bad" : "");
+  $("problems").innerHTML = s.problems.map(p => `<li>Setting ignored: ${esc(p)}</li>`).join("");
+
+  const w = s.clients.watching, r = s.clients.recent;
+  $("clients").innerHTML = (w.length || r.length) ?
+    `<table><tr><th>Address</th><th>Watching</th><th>Last request</th><th>Requests</th></tr>` +
+    r.map(c => {
+      const watching = w.filter(x => x.ip === c.ip);
+      return `<tr><td>${esc(c.ip)}</td><td>${watching.length ? watching.map(x => ago(x.seconds)).join(", ") : "-"}</td>` +
+             `<td>${esc(c.path)}, ${ago(c.ago)} ago</td><td>${esc(c.requests)}</td></tr>`;
+    }).join("") + `</table>` : "Nothing has connected in the last ten minutes.";
+
+  $("clips").innerHTML = s.clips.length ? `<table>` + s.clips.map(c =>
+    `<tr><td>${esc(c)}${c === st.clip ? ' <span class="ok">(playing)</span>' : ""}</td>` +
+    `<td style="text-align:right"><button data-del="${esc(c)}">Delete</button></td></tr>`).join("") + `</table>`
+    : "No clips yet - the test card is all there is.";
+  $("pinned").innerHTML = `OpenHamShack ${esc(s.openhamshack)}<br>` + s.pinned.map(l => `<code>${esc(l)}</code>`).join("<br>");
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("api/status", {cache: "no-store"});
+    render(await r.json());
+  } catch (e) { $("now").innerHTML = row("Status", "unreachable: " + esc(e), "bad"); }
+}
+
+$("upload").onclick = async () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  $("upmsg").textContent = "uploading " + f.name + "...";
+  try {
+    const r = await fetch("clips/" + encodeURIComponent(f.name), {method: "PUT", body: f});
+    const j = await r.json();
+    $("upmsg").textContent = r.ok ? "uploaded " + j.clip + " - set it as the Clip setting to play it" : j.error;
+  } catch (e) { $("upmsg").textContent = "failed: " + e; }
+  refresh();
+};
+
+$("clips").onclick = async ev => {
+  const name = ev.target.dataset && ev.target.dataset.del;
+  if (!name || !confirm("Delete " + name + "?")) return;
+  await fetch("clips/" + encodeURIComponent(name), {method: "DELETE"});
+  refresh();
+};
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

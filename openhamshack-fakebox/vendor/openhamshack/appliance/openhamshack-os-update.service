@@ -1,0 +1,18 @@
+[Unit]
+Description=Debian security updates (skipped while on air or recording)
+# Never on the USB stick, trying or installing: the root there is memory,
+# and an update would be downloaded every boot and lost every shutdown.
+ConditionPathExists=!/run/live/medium
+After=network-online.target openhamshack.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/openhamshack-os-update
+# Background work: whatever the box is doing comes first. The busy check
+# keeps this away from the encoder, but the console and receiver should
+# stay smooth while dpkg unpacks a kernel.
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+TimeoutStartSec=3h

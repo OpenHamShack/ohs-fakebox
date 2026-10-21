@@ -1,0 +1,5 @@
+# USB drives for recording: mount on plug-in, tidy up on unplug. The helper
+# runs as its own unit (udev kills long-running RUN programs, and a mount made
+# inside udev's namespace would not be visible to the daemon).
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_FS_USAGE}=="filesystem", RUN+="/usr/bin/systemd-run --no-block --collect /usr/local/sbin/openhamshack-usb add %k"
+ACTION=="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", RUN+="/usr/bin/systemd-run --no-block --collect /usr/local/sbin/openhamshack-usb remove %k"

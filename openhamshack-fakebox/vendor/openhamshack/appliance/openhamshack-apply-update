@@ -1,0 +1,472 @@
+#!/bin/bash
+# Install a OpenHamShack release on the box, as root, and roll back if it does not
+# come up; or go back, on request, to the version the last update replaced.
+# The only command the openhamshack user may run with sudo, in exactly two forms:
+#   sudo -n /usr/local/sbin/openhamshack-apply-update <release.tar.gz> <sha256>
+#   sudo -n /usr/local/sbin/openhamshack-apply-update --rollback
+# A release must also carry an Ed25519 signature, <release.tar.gz>.sig beside
+# it, made by a key in $KEYS (see verify_signature).
+# The sudoers line names the script without arguments, so these checks, not
+# sudo, are what keep it to those two forms: anything else is refused before
+# the script touches a file. (Kept that way rather than narrowing sudoers:
+# a box whose sudoers an update got wrong could never be updated again.)
+#
+# The daemon that asks for an update is itself restarted by it, and a child in
+# its cgroup would die with it; so the first invocation re-runs this script as
+# its own transient systemd unit and returns at once. Progress is written to
+# /run/openhamshack-update.json for the console, which survives the restart.
+set -euo pipefail
+
+STATUS=/run/openhamshack-update.json
+APP=/opt/openhamshack
+PREV=/opt/openhamshack.prev
+BACK=/opt/openhamshack.back
+STAGE=/opt/openhamshack.new
+ETC=/etc/openhamshack
+# The release, copied here before anything is checked: the daemon's copy is
+# in /home/openhamshack, which the openhamshack user can rewrite between this script
+# checking it and unpacking it.
+REL=/opt/openhamshack.new.tar.gz
+# The public keys a release may be signed with, one PEM per file. Not under
+# /etc/openhamshack: that directory belongs to the openhamshack user (the daemon saves
+# its settings there), and the point of checking here as well as in the
+# daemon is that a daemon taken over cannot choose what is trusted. Kept
+# out of SYSTEM_FILES on purpose: going back restores old code, never a key
+# list that a later release retired.
+KEYS=/usr/local/share/openhamshack/release-keys
+# Installed files outside $APP that a release replaces, kept with the
+# previous version so that a rollback, or going back, restores them too.
+SYSTEM_FILES=("$ETC/sway.config" "$ETC/mpv-input.conf" /etc/systemd/system/openhamshack.service
+    /etc/systemd/system/openhamshack-display.service /etc/systemd/network/15-usb-radio.network
+    /usr/local/sbin/openhamshack-apply-update /usr/local/sbin/openhamshack-usb /usr/local/sbin/openhamshack-net
+    /etc/udev/rules.d/90-openhamshack-usb.rules /etc/udev/rules.d/91-openhamshack-pad.rules /usr/local/sbin/openhamshack-keypad
+    /usr/local/sbin/openhamshack-growroot /etc/systemd/system/openhamshack-growroot.service
+    /usr/local/sbin/openhamshack-os-update /etc/systemd/system/openhamshack-os-update.service
+    /etc/systemd/system/openhamshack-os-update.timer /etc/apt/apt.conf.d/52openhamshack-os-updates)
+
+say() {  # phase, message
+    printf '{"phase": "%s", "message": "%s", "at": %s}\n' "$1" "${2//\"/\'}" "$(date +%s)" > "$STATUS.tmp"
+    mv -f "$STATUS.tmp" "$STATUS"
+    chmod 644 "$STATUS"
+}
+
+usage() {
+    echo "usage: $0 <release.tar.gz> <sha256>" >&2
+    echo "       $0 --rollback" >&2
+    exit 2
+}
+
+if [[ $# -eq 1 && "$1" == "--rollback" ]]; then
+    mode=rollback
+elif [[ $# -eq 2 ]]; then
+    mode=update
+    tarball=$1
+    want=$2
+    # A path, not an option, and a digest as sha256sum prints one. The
+    # checksum comparison would refuse anything else too, but only after
+    # the detach and a status line saying an update had started.
+    [[ "$tarball" == /*.tar.gz ]] || usage
+    [[ "$want" =~ ^[0-9a-f]{64}$ ]] || usage
+else
+    usage
+fi
+
+# Whether the release was signed by a key this box trusts. openssl, because
+# bash has no Ed25519 and Debian's openssl is on every image (ca-certificates
+# depends on it; mkimage.sh names it as well). Each trusted key is tried in
+# turn, so a rotation ships a release signed by the old key that lists the
+# new one too, and boxes keep working whichever signs the next. The words
+# are checked as well as the status: an openssl that cannot parse its
+# arguments must not count as a pass.
+verify_signature() {  # tarball sigfile
+    local k
+    [[ -s "$2" ]] || { echo "the release is not signed"; return 1; }
+    for k in "$KEYS"/*.pub; do
+        [[ -f "$k" ]] || continue
+        if openssl pkeyutl -verify -pubin -inkey "$k" -rawin -in "$1" -sigfile "$2" 2>/dev/null \
+                | grep -q "Signature Verified Successfully"; then
+            return 0
+        fi
+    done
+    echo "the release's signature does not match a key this box trusts"
+    return 1
+}
+
+if [[ -z "${OPENHAMSHACK_UPDATE_DETACHED:-}" ]]; then
+    if [[ $mode == update ]]; then
+        # Checked once here, before detaching, only so that the console hears
+        # a refusal at once rather than through the status file; the check
+        # that counts is the one below, on root's own copy.
+        if ! why=$(verify_signature "$tarball" "$tarball.sig"); then
+            echo "Not installing: $why" >&2
+            exit 1
+        fi
+    fi
+    if [[ $mode == rollback ]]; then
+        say queued "Starting to go back"
+        # Run from a copy: going back puts the previous version's copy of
+        # this very script in its place, and bash reads a script as it
+        # runs - rewritten under it, it would carry on in the middle of the
+        # other one. /run is noexec, hence through bash, as at hand-over.
+        cp "$0" /run/openhamshack-apply-update.rollback
+        systemd-run --quiet --collect --unit="openhamshack-update-$(date +%s)" \
+            --setenv=OPENHAMSHACK_UPDATE_DETACHED=1 /bin/bash /run/openhamshack-apply-update.rollback --rollback
+    else
+        say queued "Starting update"
+        systemd-run --quiet --collect --unit="openhamshack-update-$(date +%s)" \
+            --setenv=OPENHAMSHACK_UPDATE_DETACHED=1 "$0" "$tarball" "$want"
+    fi
+    exit 0
+fi
+
+fail() { say failed "$1"; exit 1; }
+# Whatever stops this script early - a failed exec, a command it did not
+# expect to fail - must still say so; otherwise the console shows "Checking
+# the release" forever, as 0.7.1's first attempt did.
+trap 'rc=$?; [[ $rc -ne 0 ]] && ! grep -q "\"phase\": \"failed\"" "$STATUS" 2>/dev/null && say failed "Update stopped unexpectedly (status $rc)"' EXIT
+
+keep_into() {  # dir: a copy of what runs now, system files included
+    local dir=$1 f
+    rm -rf "$dir"
+    cp -a "$APP" "$dir"
+    mkdir -p "$dir/_system"
+    for f in "${SYSTEM_FILES[@]}"; do
+        [[ -f "$f" ]] && cp -a --parents "$f" "$dir/_system/"
+    done
+    return 0
+}
+
+install_help() {  # dir: the user guide the console's Help shows (GET /help)
+    # Replaced whole, so a screenshot the guide no longer uses does not
+    # linger, and going back to a release that had no guide leaves none
+    # (the daemon then says it is not on this box) rather than a newer
+    # guide describing controls that version does not have.
+    rm -rf "$APP/help"
+    if [[ -d "$1/help" ]]; then
+        cp -r "$1/help" "$APP/help"
+        chmod -R u=rwX,go=rX "$APP/help"
+    fi
+}
+
+install_www() {  # dir: the console - index.html, openhamshack.css, js/*.js
+    # Replaced whole, like the guide: a script a release dropped must not
+    # linger, and going back to a release whose console was one index.html
+    # leaves only that. Built beside the live copy and swapped in with two
+    # renames, because the running daemon serves these files throughout
+    # the install and a browser loading the console part-way through a
+    # file-by-file copy would get one version's page with another's
+    # scripts. (The page reloads itself when a file fails to arrive.)
+    rm -rf "$APP/www.new" "$APP/www.old"
+    cp -r "$1/www" "$APP/www.new"
+    chmod -R u=rwX,go=rX "$APP/www.new"
+    [[ -d "$APP/www" ]] && mv "$APP/www" "$APP/www.old"
+    mv "$APP/www.new" "$APP/www"
+    rm -rf "$APP/www.old"
+}
+
+install_controllers() {  # dir: the controller drivers pad.py imports
+    # Replaced whole, like the guide: a driver a release dropped must not
+    # linger for pad.py to find, and going back to a release from before
+    # drivers had their own folder leaves none.
+    rm -rf "$APP/controllers"
+    if [[ -d "$1/controllers" ]]; then
+        install -d -m 755 "$APP/controllers"
+        install -m 644 "$1"/controllers/*.py "$APP/controllers/"
+    fi
+}
+
+install_openhamshacklib() {  # dir: the daemon's pure modules (openhamshack.py imports them)
+    # Replaced whole, like the drivers, so a module a release dropped does
+    # not linger. Going back to a release from before the daemon was split
+    # leaves none, which that release's openhamshack.py never looks for.
+    rm -rf "$APP/openhamshacklib"
+    if [[ -d "$1/openhamshacklib" ]]; then
+        install -d -m 755 "$APP/openhamshacklib"
+        install -m 644 "$1"/openhamshacklib/*.py "$APP/openhamshacklib/"
+    fi
+}
+
+restore_from() {  # dir made by keep_into
+    local dir=$1
+    cp -a "$dir/_system/." /
+    install -m 644 "$dir/openhamshack.py" "$APP/openhamshack.py"
+    install -m 755 "$dir/screens.py" "$APP/screens.py"
+    [[ -f "$dir/pad.py" ]] && install -m 644 "$dir/pad.py" "$APP/pad.py" || rm -f "$APP/pad.py"
+    install_controllers "$dir"
+    install_openhamshacklib "$dir"
+    [[ -f "$dir/VERSION" ]] && install -m 644 "$dir/VERSION" "$APP/VERSION" || rm -f "$APP/VERSION"
+    install_www "$dir"
+    install_help "$dir"
+    systemctl daemon-reload
+}
+
+came_up_as() {  # version; waits up to 40 s for the daemon to answer with it
+    local want_ver=$1 i
+    for i in $(seq 1 40); do
+        sleep 1
+        if curl -s -m 2 http://127.0.0.1:8080/api/status | grep -q "\"version\": \"$want_ver\""; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [[ $mode == rollback ]]; then
+    # Back to the version the last update replaced, kept in $PREV by it.
+    # Only that one: $PREV is removed once it is running again, so there is
+    # no going back twice, and a version gone back from is reinstalled the
+    # ordinary way (the console offers it, needing a deliberate tap). What
+    # runs now is kept in $BACK until the previous version has answered, so
+    # one that no longer starts - a changed system underneath it - leaves
+    # the box where it was rather than with neither.
+    say verifying "Checking the previous version"
+    [[ -f "$PREV/VERSION" && -f "$PREV/openhamshack.py" && -f "$PREV/screens.py" && -f "$PREV/www/index.html" ]] \
+        || fail "No previous version on this box"
+    old=$(tr -d ' \n' < "$PREV/VERSION")
+    cur=$(tr -d ' \n' < "$APP/VERSION" 2>/dev/null || echo unknown)
+    # After an update that rolled itself back, $PREV holds what runs now.
+    [[ "$old" != "$cur" ]] || fail "The previous version is the one running ($cur)"
+    say installing "Going back to $old"
+    keep_into "$BACK"
+    restore_from "$PREV"
+    systemctl restart openhamshack.service
+    say checking "Waiting for OpenHamShack $old to start"
+    if came_up_as "$old"; then
+        systemctl restart openhamshack-display.service || true
+        rm -rf "$PREV" "$BACK"
+        say done "Back on OpenHamShack $old"
+        exit 0
+    fi
+    say rolling-back "OpenHamShack $old did not start; returning to $cur"
+    restore_from "$BACK"
+    rm -rf "$BACK"
+    systemctl restart openhamshack.service openhamshack-display.service || true
+    fail "OpenHamShack $old did not start; still on $cur"
+fi
+
+say verifying "Checking the release"
+[[ -f "$tarball" ]] || fail "release file missing"
+if [[ "$tarball" != "$REL" ]]; then
+    # Handed over, the next helper is given $REL itself.
+    rm -f "$REL" "$REL.sig"
+    install -m 600 "$tarball" "$REL"
+    if [[ -f "$tarball.sig" ]]; then install -m 600 "$tarball.sig" "$REL.sig"; fi
+fi
+got=$(sha256sum "$REL" | cut -d' ' -f1)
+[[ "$got" == "$want" ]] || fail "checksum mismatch"
+if [[ -n "${OPENHAMSHACK_UPDATE_HANDED_OVER:-}" && ! -f "$REL.sig" ]]; then
+    # The one way in without a signature, and only for the first release
+    # that has this check: a box still running an older helper and daemon
+    # fetches no signature and hands over to this script without one. The
+    # older helper has already decided to install it, as it would have
+    # installed this release with or without us; refusing here would only
+    # strand that box on its old version. A helper from this release on
+    # hands over only after verify_signature passed, with the .sig beside
+    # $REL, so it never reaches this branch; and sudo drops the variable,
+    # so the daemon cannot claim to have been handed over.
+    echo "installed by an older helper that does not check signatures; accepted by checksum only" >&2
+elif ! why=$(verify_signature "$REL" "$REL.sig"); then
+    fail "Not installing: $why"
+fi
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+# --no-same-owner: as root, tar would otherwise give each file the owner
+# recorded in the tarball - uid 1000 for releases made on shack, which on a
+# box is the openhamshack user, who could then rewrite this release (this
+# script's successor included) between the signature check and the
+# install. Root-owned whatever the tarball says.
+tar --no-same-owner -xzf "$REL" -C "$STAGE" || fail "release does not unpack"
+[[ -f "$STAGE/VERSION" && -f "$STAGE/openhamshack.py" && -f "$STAGE/www/index.html" ]] || fail "release is incomplete"
+python3 -m py_compile "$STAGE/openhamshack.py" || fail "release daemon does not compile"
+new=$(tr -d ' \n' < "$STAGE/VERSION")
+
+# Hand over to the release's own installer if it differs from this one, so a
+# release that changes how it is installed is installed its own way - not one
+# update late, as 0.4.7's USB helper was by the 0.4.6 installer.
+if [[ -z "${OPENHAMSHACK_UPDATE_HANDED_OVER:-}" && -f "$STAGE/openhamshack-apply-update" ]] \
+        && ! cmp -s "$0" "$STAGE/openhamshack-apply-update"; then
+    # Run through bash, not directly: /run is mounted noexec, and exec'ing the
+    # copy failed with 126 the first time a release changed this script (0.7.1).
+    # A child rather than exec, so that if it cannot start at all this
+    # script's exit trap still reports it - a failed exec skips the trap.
+    cp "$STAGE/openhamshack-apply-update" /run/openhamshack-apply-update.next
+    rc=0
+    OPENHAMSHACK_UPDATE_HANDED_OVER=1 bash /run/openhamshack-apply-update.next "$REL" "$want" || rc=$?
+    exit $rc
+fi
+
+say installing "Installing $new"
+# Keep everything the release replaces, system files included, for rollback
+# and for going back by hand later (--rollback).
+keep_into "$PREV"
+
+install_release() {  # src dir
+    local src=$1
+    install -m 644 "$src/openhamshack.py" "$APP/openhamshack.py"
+    install -m 755 "$src/screens.py" "$APP/screens.py"
+    [[ -f "$src/pad.py" ]] && install -m 644 "$src/pad.py" "$APP/pad.py"
+    install_controllers "$src"
+    install_openhamshacklib "$src"
+    install -m 644 "$src/VERSION" "$APP/VERSION"
+    install_www "$src"
+    install_help "$src"
+    [[ -f "$src/mpv-input.conf" ]] && install -m 644 "$src/mpv-input.conf" "$ETC/mpv-input.conf"
+    if [[ -f "$src/sway.config" ]]; then
+        # The screen assignment is the site's, not the release's: keep the
+        # box's own $rx/$ui lines.
+        local rx ui
+        rx=$(grep -m1 '^set \$rx ' "$ETC/sway.config" 2>/dev/null || true)
+        ui=$(grep -m1 '^set \$ui ' "$ETC/sway.config" 2>/dev/null || true)
+        cp "$src/sway.config" "$ETC/sway.config.new"
+        [[ -n "$rx" ]] && sed -i "s|^set \\\$rx .*|$rx|" "$ETC/sway.config.new"
+        [[ -n "$ui" ]] && sed -i "s|^set \\\$ui .*|$ui|" "$ETC/sway.config.new"
+        mv -f "$ETC/sway.config.new" "$ETC/sway.config"
+    fi
+    for unit in openhamshack.service openhamshack-display.service; do
+        [[ -f "$src/$unit" ]] && install -m 644 "$src/$unit" "/etc/systemd/system/$unit"
+    done
+    [[ -f "$src/15-usb-radio.network" ]] && install -m 644 "$src/15-usb-radio.network" /etc/systemd/network/
+    [[ -f "$src/openhamshack-apply-update" ]] && install -m 755 "$src/openhamshack-apply-update" /usr/local/sbin/openhamshack-apply-update
+    if [[ -f "$src/openhamshack-usb" ]]; then
+        install -m 755 "$src/openhamshack-usb" /usr/local/sbin/openhamshack-usb
+        install -m 644 "$src/90-openhamshack-usb.rules" /etc/udev/rules.d/90-openhamshack-usb.rules
+        install -d /media/openhamshack
+        echo "openhamshack ALL=(root) NOPASSWD: /usr/local/sbin/openhamshack-usb eject *" > /tmp/openhamshack-usb.sudoers
+        visudo -c -q -f /tmp/openhamshack-usb.sudoers && install -m 440 /tmp/openhamshack-usb.sudoers /etc/sudoers.d/openhamshack-usb
+        rm -f /tmp/openhamshack-usb.sudoers
+        udevadm control --reload || true
+    fi
+    # Shut down / Restart from the console: exactly those two commands.
+    echo "openhamshack ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot" > /tmp/openhamshack-power.sudoers
+    visudo -c -q -f /tmp/openhamshack-power.sudoers && install -m 440 /tmp/openhamshack-power.sudoers /etc/sudoers.d/openhamshack-power
+    rm -f /tmp/openhamshack-power.sudoers
+    if [[ -f "$src/92-openhamshack-usb-power.rules" ]]; then
+        install -m 644 "$src/92-openhamshack-usb-power.rules" /etc/udev/rules.d/92-openhamshack-usb-power.rules
+        echo -1 > /sys/module/usbcore/parameters/autosuspend || true
+        for f in /sys/bus/usb/devices/*/power/control; do echo on > "$f" || true; done
+    fi
+    if [[ -f "$src/openhamshack-net" ]]; then
+        install -m 755 "$src/openhamshack-net" /usr/local/sbin/openhamshack-net
+        echo "openhamshack ALL=(root) NOPASSWD: /usr/local/sbin/openhamshack-net *" > /tmp/openhamshack-net.sudoers
+        visudo -c -q -f /tmp/openhamshack-net.sudoers && install -m 440 /tmp/openhamshack-net.sudoers /etc/sudoers.d/openhamshack-net
+        rm -f /tmp/openhamshack-net.sudoers
+    fi
+    if [[ -f "$src/logind-openhamshack.conf" ]]; then
+        # Read by logind at its next start (a reboot); restarting logind here
+        # would end the touchscreen session mid-update.
+        install -D -m 644 "$src/logind-openhamshack.conf" /etc/systemd/logind.conf.d/50-openhamshack.conf
+    fi
+    if [[ -f "$src/openhamshack-growroot" ]]; then
+        install -m 755 "$src/openhamshack-growroot" /usr/local/sbin/openhamshack-growroot
+        install -m 644 "$src/openhamshack-growroot.service" /etc/systemd/system/openhamshack-growroot.service
+        systemctl daemon-reload
+        systemctl enable openhamshack-growroot.service || true
+    fi
+    if [[ -f "$src/91-openhamshack-pad.rules" ]]; then
+        # The rule runs openhamshack-keypad, so that goes first.
+        [[ -f "$src/openhamshack-keypad" ]] && install -m 755 "$src/openhamshack-keypad" /usr/local/sbin/openhamshack-keypad
+        install -m 644 "$src/91-openhamshack-pad.rules" /etc/udev/rules.d/91-openhamshack-pad.rules
+        udevadm control --reload || true
+        udevadm trigger --subsystem-match=hidraw || true   # a pad already plugged in gets the new mode
+    fi
+    if [[ -f "$src/93-openhamshack-ptt.rules" ]]; then
+        # HID relay boards for the PTT output; one already plugged in gets
+        # its new mode now, not at the next replug.
+        install -m 644 "$src/93-openhamshack-ptt.rules" /etc/udev/rules.d/93-openhamshack-ptt.rules
+        udevadm control --reload || true
+        udevadm trigger --subsystem-match=hidraw || true
+    fi
+    [[ -f "$src/longmynd-picotuner.patch" ]] && longmynd_picotuner "$src/longmynd-picotuner.patch"
+    install_keys "$src/release-keys"
+    # ---- OS security updates (begin) ----
+    # Files and timer only. The unattended-upgrades package itself is
+    # installed by openhamshack-os-update at its first quiet hour, so that this
+    # update never waits on apt, or fails for want of a Debian mirror.
+    # Debian's apt-daily timers go off, as in the image: they would run
+    # unattended-upgrades without asking whether the box is on air.
+    if [[ -f "$src/openhamshack-os-update" ]]; then
+        install -m 755 "$src/openhamshack-os-update" /usr/local/sbin/openhamshack-os-update
+        install -m 644 "$src/openhamshack-os-update.service" "$src/openhamshack-os-update.timer" /etc/systemd/system/
+        install -m 644 "$src/apt-openhamshack-os-updates.conf" /etc/apt/apt.conf.d/52openhamshack-os-updates
+        install -d -m 755 /var/lib/openhamshack
+        systemctl daemon-reload
+        systemctl disable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+        systemctl enable --now openhamshack-os-update.timer || true
+    fi
+    # ---- OS security updates (end) ----
+    systemctl daemon-reload
+}
+
+# The release's list of trusted keys replaces the box's, whole: that is how a
+# key is rotated in (a release signed by the old key that lists both) and
+# later out (one signed by the new key that lists only it). The list came in
+# a release whose signature was just checked against the old list, so only a
+# trusted key can change it. A release with no usable key at all may not
+# leave the box unable to verify anything, so its list is ignored.
+install_keys() {  # dir
+    local d=$1 k n=0
+    [[ -d "$d" ]] || return 0
+    rm -rf "$KEYS.new"
+    install -d -m 755 "$KEYS.new"
+    for k in "$d"/*.pub; do
+        [[ -f "$k" ]] && openssl pkey -pubin -in "$k" -noout 2>/dev/null || continue
+        install -m 644 "$k" "$KEYS.new/"
+        n=$((n + 1))
+    done
+    if [[ $n -eq 0 ]]; then
+        rm -rf "$KEYS.new"
+        echo "release lists no usable signing keys; keeping this box's" >&2
+        return 0
+    fi
+    rm -rf "$KEYS.old"
+    if [[ -d "$KEYS" ]]; then mv "$KEYS" "$KEYS.old"; fi
+    mv "$KEYS.new" "$KEYS"
+    rm -rf "$KEYS.old"
+}
+
+# A box imaged before the PicoTuner could be used on USB has upstream
+# longmynd, which only opens an FTDI MiniTiouner. The image keeps longmynd's
+# source and the compiler, so the patch the image build applies is applied
+# here too and longmynd rebuilt in place - otherwise only a reinstall would
+# bring it. Built in a copy and swapped in only when it compiled; a failure
+# leaves the working MiniTiouner binary and does not fail the update (the
+# console then says the PicoTuner needs a newer longmynd). Not undone on
+# rollback: the patched binary drives a MiniTiouner exactly as before.
+longmynd_picotuner() {  # patch
+    local p=$1 w
+    [[ -f /opt/longmynd/ftdi.c ]] || return 0
+    patch -d /opt/longmynd -p1 -R --dry-run -s -f < "$p" > /dev/null 2>&1 && return 0  # already in
+    say installing "Building longmynd for the PicoTuner"
+    w=$(mktemp -d)
+    cp -a /opt/longmynd/. "$w/"
+    if patch -d "$w" -p1 -s -f < "$p" > /dev/null && make -C "$w" clean > /dev/null 2>&1 \
+            && make -C "$w" COPT="-O3 -march=x86-64-v2" > "$w/build.log" 2>&1; then
+        install -m 755 "$w/longmynd" /opt/longmynd/longmynd.new
+        mv -f /opt/longmynd/longmynd.new /opt/longmynd/longmynd
+        patch -d /opt/longmynd -p1 -s -f < "$p" > /dev/null || true
+        install -m 644 "$w/minitiouner.rules" /etc/udev/rules.d/minitiouner.rules
+        udevadm control --reload || true
+        udevadm trigger --subsystem-match=usb --attr-match=idVendor=2e8a || true  # one already plugged in
+    else
+        echo "longmynd: PicoTuner patch did not build; keeping the old binary" >&2
+        tail -n 20 "$w/build.log" >&2 || true
+    fi
+    rm -rf "$w"
+}
+
+install_release "$STAGE"
+systemctl restart openhamshack.service
+say checking "Waiting for OpenHamShack $new to start"
+if came_up_as "$new"; then
+    systemctl restart openhamshack-display.service || true
+    rm -rf "$STAGE" "$REL" "$REL.sig"
+    say done "OpenHamShack $new installed"
+    exit 0
+fi
+
+say rolling-back "OpenHamShack $new did not start; restoring the previous version"
+old=$(tr -d ' \n' < "$PREV/VERSION" 2>/dev/null || echo unknown)
+restore_from "$PREV"
+systemctl restart openhamshack.service openhamshack-display.service || true
+fail "OpenHamShack $new did not start; rolled back to $old"

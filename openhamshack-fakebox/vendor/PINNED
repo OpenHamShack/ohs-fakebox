@@ -1,0 +1,7 @@
+# Written by tools/refresh-vendor.sh - do not edit by hand.
+# Classic has no live repo any more (archived 21/10/2026): the line below
+# names a frozen copy of the archived appliance at its last commit, not
+# something this tool can fetch a newer one of. See the tool's own comment
+# if that commit ever needs to change.
+classic               68669d4856ab0461046d417efc1b1019db3809e1  (Release 0.9.17)
+openhamshack-remote   e0bc2b061b3003ab5bdb1d52e6fcd6042880dcdc  (A standing test fakebox on shack that survives reboots)
